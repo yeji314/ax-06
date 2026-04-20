@@ -1,0 +1,344 @@
+[
+  {
+    "id": "P001",
+    "title": "마포구 공덕동 투룸",
+    "region": "서울 마포구",
+    "district": "공덕동",
+    "type": "투룸",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 3000,
+      "monthly": 80
+    },
+    "area_m2": 45,
+    "floor": 3,
+    "total_floors": 5,
+    "features": ["주차가능", "엘리베이터", "학습실"],
+    "subway": "5호선 공덕역 도보 5분",
+    "description": "채광 좋은 남향 투룸입니다.",
+    "score": 0
+  },
+  {
+    "id": "P002",
+    "title": "마포구 홍대입구 원룸",
+    "region": "서울 마포구",
+    "district": "홍대입구",
+    "type": "원룸",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 1000,
+      "monthly": 60
+    },
+    "area_m2": 20,
+    "floor": 2,
+    "total_floors": 4,
+    "features": ["에어컨", "세탁기"],
+    "subway": "2호선 홍대입구역 도보 3분",
+    "description": "역세권 원룸, 풀옵션 제공.",
+    "score": 0
+  },
+  {
+    "id": "P003",
+    "title": "강남구 역삼동 아파트",
+    "region": "서울 강남구",
+    "district": "역삼동",
+    "type": "아파트",
+    "deal_type": "전세",
+    "price": {
+      "deposit": 80000,
+      "monthly": 0
+    },
+    "area_m2": 84,
+    "floor": 10,
+    "total_floors": 25,
+    "features": ["주차가능", "엘리베이터", "헬스장", "보안시스템"],
+    "subway": "2호선 역삼역 도보 7분",
+    "description": "강남 중심부 대형 아파트, 편의시설 풍부.",
+    "score": 0
+  },
+  {
+    "id": "P004",
+    "title": "강남구 삼성동 오피스텔",
+    "region": "서울 강남구",
+    "district": "삼성동",
+    "type": "오피스텔",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 5000,
+      "monthly": 120
+    },
+    "area_m2": 33,
+    "floor": 7,
+    "total_floors": 15,
+    "features": ["엘리베이터", "주차가능", "보안시스템", "에어컨"],
+    "subway": "2호선 삼성역 도보 5분",
+    "description": "코엑스 인근 오피스텔, 비즈니스 중심.",
+    "score": 0
+  },
+  {
+    "id": "P005",
+    "title": "송파구 잠실동 아파트",
+    "region": "서울 송파구",
+    "district": "잠실동",
+    "type": "아파트",
+    "deal_type": "매매",
+    "price": {
+      "deposit": 120000,
+      "monthly": 0
+    },
+    "area_m2": 102,
+    "floor": 15,
+    "total_floors": 30,
+    "features": ["주차가능", "엘리베이터", "헬스장", "수영장", "어린이집"],
+    "subway": "2호선 잠실역 도보 10분",
+    "description": "롯데월드 인근 대단지 아파트.",
+    "score": 0
+  },
+  {
+    "id": "P006",
+    "title": "성동구 성수동 투룸",
+    "region": "서울 성동구",
+    "district": "성수동",
+    "type": "투룸",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 2000,
+      "monthly": 90
+    },
+    "area_m2": 42,
+    "floor": 4,
+    "total_floors": 6,
+    "features": ["에어컨", "세탁기", "주차가능"],
+    "subway": "2호선 성수역 도보 8분",
+    "description": "핫플레이스 성수동 트렌디한 투룸.",
+    "score": 0
+  },
+  {
+    "id": "P007",
+    "title": "마포구 합정동 쓰리룸",
+    "region": "서울 마포구",
+    "district": "합정동",
+    "type": "쓰리룸",
+    "deal_type": "전세",
+    "price": {
+      "deposit": 45000,
+      "monthly": 0
+    },
+    "area_m2": 76,
+    "floor": 5,
+    "total_floors": 8,
+    "features": ["주차가능", "엘리베이터", "에어컨", "학습실"],
+    "subway": "2호선 합정역 도보 6분",
+    "description": "넓은 3룸, 가족 거주 적합.",
+    "score": 0
+  },
+  {
+    "id": "P008",
+    "title": "강남구 신사동 원룸",
+    "region": "서울 강남구",
+    "district": "신사동",
+    "type": "원룸",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 2000,
+      "monthly": 100
+    },
+    "area_m2": 18,
+    "floor": 3,
+    "total_floors": 5,
+    "features": ["에어컨", "인터넷"],
+    "subway": "3호선 신사역 도보 4분",
+    "description": "가로수길 인근 원룸.",
+    "score": 0
+  },
+  {
+    "id": "P009",
+    "title": "서초구 방배동 아파트",
+    "region": "서울 서초구",
+    "district": "방배동",
+    "type": "아파트",
+    "deal_type": "전세",
+    "price": {
+      "deposit": 65000,
+      "monthly": 0
+    },
+    "area_m2": 79,
+    "floor": 8,
+    "total_floors": 20,
+    "features": ["주차가능", "엘리베이터", "보안시스템", "놀이터"],
+    "subway": "2호선 방배역 도보 9분",
+    "description": "조용한 주거환경, 학군 우수.",
+    "score": 0
+  },
+  {
+    "id": "P010",
+    "title": "용산구 이태원동 오피스텔",
+    "region": "서울 용산구",
+    "district": "이태원동",
+    "type": "오피스텔",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 3000,
+      "monthly": 95
+    },
+    "area_m2": 28,
+    "floor": 6,
+    "total_floors": 12,
+    "features": ["에어컨", "엘리베이터", "보안시스템"],
+    "subway": "6호선 이태원역 도보 3분",
+    "description": "외국인 친화적 글로벌 환경.",
+    "score": 0
+  },
+  {
+    "id": "P011",
+    "title": "마포구 신수동 투룸",
+    "region": "서울 마포구",
+    "district": "신수동",
+    "type": "투룸",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 1500,
+      "monthly": 70
+    },
+    "area_m2": 38,
+    "floor": 2,
+    "total_floors": 4,
+    "features": ["에어컨", "세탁기"],
+    "subway": "6호선 광흥창역 도보 7분",
+    "description": "한강 인접 조용한 주거지역.",
+    "score": 0
+  },
+  {
+    "id": "P012",
+    "title": "성남시 분당구 아파트",
+    "region": "경기 성남시 분당구",
+    "district": "서현동",
+    "type": "아파트",
+    "deal_type": "매매",
+    "price": {
+      "deposit": 85000,
+      "monthly": 0
+    },
+    "area_m2": 95,
+    "floor": 12,
+    "total_floors": 20,
+    "features": ["주차가능", "엘리베이터", "헬스장", "어린이집", "학습실"],
+    "subway": "분당선 서현역 도보 5분",
+    "description": "분당 대단지 아파트, 학군 최고.",
+    "score": 0
+  },
+  {
+    "id": "P013",
+    "title": "강남구 도곡동 아파트",
+    "region": "서울 강남구",
+    "district": "도곡동",
+    "type": "아파트",
+    "deal_type": "매매",
+    "price": {
+      "deposit": 150000,
+      "monthly": 0
+    },
+    "area_m2": 115,
+    "floor": 20,
+    "total_floors": 35,
+    "features": ["주차가능", "엘리베이터", "헬스장", "수영장", "보안시스템", "어린이집"],
+    "subway": "3호선 도곡역 도보 6분",
+    "description": "강남 최고급 대형 아파트.",
+    "score": 0
+  },
+  {
+    "id": "P014",
+    "title": "송파구 위례동 투룸",
+    "region": "서울 송파구",
+    "district": "위례동",
+    "type": "투룸",
+    "deal_type": "전세",
+    "price": {
+      "deposit": 25000,
+      "monthly": 0
+    },
+    "area_m2": 52,
+    "floor": 4,
+    "total_floors": 10,
+    "features": ["주차가능", "엘리베이터", "에어컨"],
+    "subway": "5호선 마천역 도보 12분",
+    "description": "신도시 쾌적한 환경의 투룸.",
+    "score": 0
+  },
+  {
+    "id": "P015",
+    "title": "마포구 대흥동 원룸",
+    "region": "서울 마포구",
+    "district": "대흥동",
+    "type": "원룸",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 500,
+      "monthly": 45
+    },
+    "area_m2": 15,
+    "floor": 1,
+    "total_floors": 3,
+    "features": ["에어컨"],
+    "subway": "6호선 대흥역 도보 5분",
+    "description": "저렴한 가격의 실용적인 원룸.",
+    "score": 0
+  },
+  {
+    "id": "P016",
+    "title": "용산구 한남동 아파트",
+    "region": "서울 용산구",
+    "district": "한남동",
+    "type": "아파트",
+    "deal_type": "전세",
+    "price": {
+      "deposit": 90000,
+      "monthly": 0
+    },
+    "area_m2": 89,
+    "floor": 5,
+    "total_floors": 15,
+    "features": ["주차가능", "엘리베이터", "한강뷰", "보안시스템"],
+    "subway": "6호선 한강진역 도보 8분",
+    "description": "한강 조망 가능한 고급 아파트.",
+    "score": 0
+  },
+  {
+    "id": "P017",
+    "title": "성동구 왕십리 오피스텔",
+    "region": "서울 성동구",
+    "district": "왕십리동",
+    "type": "오피스텔",
+    "deal_type": "월세",
+    "price": {
+      "deposit": 2000,
+      "monthly": 75
+    },
+    "area_m2": 30,
+    "floor": 9,
+    "total_floors": 18,
+    "features": ["엘리베이터", "에어컨", "주차가능", "세탁기"],
+    "subway": "2호선 왕십리역 도보 2분",
+    "description": "초역세권 오피스텔, 교통 최우선.",
+    "score": 0
+  },
+  {
+    "id": "P018",
+    "title": "강남구 청담동 쓰리룸",
+    "region": "서울 강남구",
+    "district": "청담동",
+    "type": "쓰리룸",
+    "deal_type": "전세",
+    "price": {
+      "deposit": 75000,
+      "monthly": 0
+    },
+    "area_m2": 85,
+    "floor": 3,
+    "total_floors": 7,
+    "features": ["주차가능", "엘리베이터", "보안시스템", "테라스"],
+    "subway": "7호선 청담역 도보 10분",
+    "description": "청담동 럭셔리 쓰리룸.",
+    "score": 0
+  }
+]
