@@ -111,15 +111,28 @@ def validate_node(state: AgentState) -> AgentState:
 
     has_region = bool(condition.get("region"))
     has_deal_type = bool(condition.get("deal_type"))
+    has_price = bool(
+        condition.get("max_deposit")
+        or condition.get("max_monthly")
+        or condition.get("max_price")
+    )
 
-    if has_region or has_deal_type:
+    # 지역·유형·가격 세 조건 모두 있어야 검색 가능
+    if has_region and has_deal_type and has_price:
         return {**state, "is_valid": True, "error_message": None}
-    else:
-        return {
-            **state,
-            "is_valid": False,
-            "error_message": "지역 또는 거래 유형이 필요합니다.",
-        }
+
+    missing = []
+    if not has_region:
+        missing.append("지역")
+    if not has_deal_type:
+        missing.append("거래유형")
+    if not has_price:
+        missing.append("가격")
+    return {
+        **state,
+        "is_valid": False,
+        "error_message": f"필수 조건 누락: {', '.join(missing)}",
+    }
 
 
 def clarify_node(state: AgentState) -> AgentState:
@@ -132,10 +145,17 @@ def clarify_node(state: AgentState) -> AgentState:
         missing.append("희망 지역")
     if not condition.get("deal_type"):
         missing.append("거래 유형(월세/전세/매매)")
+    if not (
+        condition.get("max_deposit")
+        or condition.get("max_monthly")
+        or condition.get("max_price")
+    ):
+        missing.append("예산(가격)")
 
     examples = {
         "희망 지역": "예: '서울 마포구', '강남구 역삼동', '송파구'",
         "거래 유형(월세/전세/매매)": "예: '월세', '전세', '매매'",
+        "예산(가격)": "예: '보증금 3000만/월 80만 이하', '전세 5억 이하', '매매 20억 이하'",
     }
     missing_with_examples = "\n".join(
         f"- {m} ({examples.get(m, '')})" for m in missing
