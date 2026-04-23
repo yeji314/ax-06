@@ -1,8 +1,7 @@
-import json
-import re
 import sys
-from typing import Any
+from typing import Any, Optional
 
+from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
@@ -11,53 +10,51 @@ from tools.search_tool import search_properties
 from tools.filter_tool import filter_and_score
 
 
+class ConditionSchema(BaseModel):
+    region: Optional[str] = Field(None, description="희망 지역명 (예: 마포구, 강남구, 서울 마포구)")
+    deal_type: Optional[str] = Field(None, description="거래 유형: '월세', '전세', '매매' 중 하나만")
+    max_deposit: Optional[int] = Field(None, description="최대 보증금/전세금 (만원 단위 숫자)")
+    max_monthly: Optional[int] = Field(None, description="최대 월세 (만원 단위 숫자, 월세 거래일 때만)")
+    max_price: Optional[int] = Field(None, description="최대 매매가 (만원 단위 숫자, 매매 거래일 때만)")
+    min_area: Optional[float] = Field(None, description="최소 면적 (m² 단위 숫자)")
+    property_type: Optional[str] = Field(None, description="방 종류: '원룸', '투룸', '쓰리룸', '아파트', '오피스텔' 중 하나")
+
+
 def _get_llm() -> ChatOpenAI:
     return ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 
-def _extract_json(text: str) -> dict:
-    """LLM 응답에서 JSON 블록을 추출합니다."""
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if match:
-        return json.loads(match.group(1))
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    return {}
-
-
 def parse_condition_node(state: AgentState) -> AgentState:
     """사용자 자연어 입력을 파싱하여 UserCondition을 추출합니다."""
-    llm = _get_llm()
+    llm = _get_llm().with_structured_output(ConditionSchema)
+
     system_prompt = (
-        "사용자의 부동산 조건을 JSON으로 파싱하세요. "
-        "필드: region(지역명), deal_type(월세/전세/매매), "
-        "max_deposit(최대 보증금, 만원), max_monthly(최대 월세, 만원), "
-        "max_price(최대 매매가/전세가, 만원), min_area(최소 면적, m²), "
-        "property_type(원룸/투룸/쓰리룸/아파트/오피스텔). "
-        "해당하지 않는 필드는 null로 설정. "
-        "반드시 JSON 코드블록으로만 응답하세요."
+        "사용자의 부동산 검색 조건을 분석하여 구조화된 형태로 추출하세요.\n"
+        "- 지역명은 '마포구', '강남구', '서울 마포구' 형태로 추출\n"
+        "- 거래 유형은 반드시 '월세', '전세', '매매' 중 하나로만 지정\n"
+        "- '월세 보증금'이 언급되더라도 deal_type은 명시적으로 언급된 것 우선 (매매/전세/월세)\n"
+        "- 금액은 만원 단위 숫자로만 반환 (예: '3000만원' → 3000)\n"
+        "- 명시되지 않은 필드는 null"
     )
 
     messages = state.get("messages", [])
-    messages = list(messages) + [
+    invoke_messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=state["user_input"]),
     ]
 
     try:
-        response = llm.invoke(messages)
-        parsed = _extract_json(response.content)
+        parsed: ConditionSchema = llm.invoke(invoke_messages)
         condition: UserCondition = {
-            "region": parsed.get("region"),
-            "deal_type": parsed.get("deal_type"),
-            "max_deposit": parsed.get("max_deposit"),
-            "max_monthly": parsed.get("max_monthly"),
-            "max_price": parsed.get("max_price"),
-            "min_area": parsed.get("min_area"),
-            "property_type": parsed.get("property_type"),
+            "region": parsed.region,
+            "deal_type": parsed.deal_type,
+            "max_deposit": parsed.max_deposit,
+            "max_monthly": parsed.max_monthly,
+            "max_price": parsed.max_price,
+            "min_area": parsed.min_area,
+            "property_type": parsed.property_type,
         }
-    except Exception as e:
+    except Exception:
         condition = {
             "region": None,
             "deal_type": None,
@@ -68,10 +65,15 @@ def parse_condition_node(state: AgentState) -> AgentState:
             "property_type": None,
         }
 
+    updated_messages = list(messages) + [
+        HumanMessage(content=state["user_input"]),
+        AIMessage(content=str(condition)),
+    ]
+
     return {
         **state,
         "condition": condition,
-        "messages": messages + [AIMessage(content=str(condition))],
+        "messages": updated_messages,
     }
 
 
