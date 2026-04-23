@@ -41,4 +41,5 @@ class AgentState(TypedDict):
     filtered_results: List[dict]
     recommendations: str
     retry_count: int
+    verify_retry_count: int
     messages: List[Any]

@@ -263,6 +263,99 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     }
 
 
+def _verify_price(prop: dict, condition: dict):
+    deal_type = prop.get("deal_type", "")
+    price = prop.get("price", {})
+    deposit = price.get("deposit", 0)
+    monthly = price.get("monthly", 0)
+
+    if deal_type == "월세":
+        max_deposit = condition.get("max_deposit")
+        max_monthly = condition.get("max_monthly")
+        if max_deposit and deposit > max_deposit:
+            return False, f"보증금 {deposit} > 최대 {max_deposit}"
+        if max_monthly and monthly > max_monthly:
+            return False, f"월세 {monthly} > 최대 {max_monthly}"
+        return True, f"보증금 {deposit}/월 {monthly} ≤ 조건"
+    if deal_type == "전세":
+        max_deposit = condition.get("max_deposit") or condition.get("max_price")
+        if max_deposit and deposit > max_deposit:
+            return False, f"전세가 {deposit} > 최대 {max_deposit}"
+        return True, f"전세가 {deposit} ≤ 조건"
+    if deal_type == "매매":
+        max_price = condition.get("max_price") or condition.get("max_deposit")
+        if max_price and deposit > max_price:
+            return False, f"매매가 {deposit} > 최대 {max_price}"
+        return True, f"매매가 {deposit} ≤ 조건"
+    return False, f"알 수 없는 거래유형: {deal_type}"
+
+
+def _verify_type(prop: dict, condition: dict):
+    reasons = []
+    wanted_deal = condition.get("deal_type")
+    wanted_prop = condition.get("property_type")
+
+    if wanted_deal and prop.get("deal_type") != wanted_deal:
+        return False, f"거래유형 {prop.get('deal_type')} ≠ {wanted_deal}"
+    if wanted_deal:
+        reasons.append(f"거래유형 {wanted_deal} 일치")
+
+    if wanted_prop and prop.get("type") != wanted_prop:
+        return False, f"방 유형 {prop.get('type')} ≠ {wanted_prop}"
+    if wanted_prop:
+        reasons.append(f"방 유형 {wanted_prop} 일치")
+
+    if not reasons:
+        return True, "유형 조건 미지정 → 통과"
+    return True, ", ".join(reasons)
+
+
+def _verify_region(prop: dict, condition: dict):
+    wanted = condition.get("region")
+    if not wanted:
+        return True, "지역 조건 미지정 → 통과"
+
+    haystack = " ".join(
+        str(prop.get(k, "")) for k in ("region", "district", "subway", "title")
+    )
+    if wanted in haystack:
+        return True, f"'{wanted}' 매칭"
+    return False, f"'{wanted}' 불일치 (매물 지역: {prop.get('region')} {prop.get('district')})"
+
+
+def verify_node(state: AgentState) -> AgentState:
+    """추천 매물이 사용자의 필수 조건(가격/유형/지역)에 부합하는지 점검합니다."""
+    condition = state.get("condition", {})
+    filtered = state.get("filtered_results", [])
+
+    print("\n[🛡️ 필수조건 검증: 가격 / 유형 / 지역]")
+
+    verified = []
+    for prop in filtered:
+        price_ok, price_reason = _verify_price(prop, condition)
+        type_ok, type_reason = _verify_type(prop, condition)
+        region_ok, region_reason = _verify_region(prop, condition)
+        all_pass = price_ok and type_ok and region_ok
+
+        status = "✅ 통과" if all_pass else "❌ 탈락"
+        print(f"  {status} [{prop.get('id', '-')}] {prop.get('title', '-')}")
+        print(f"     - 가격: {'✅' if price_ok else '❌'} {price_reason}")
+        print(f"     - 유형: {'✅' if type_ok else '❌'} {type_reason}")
+        print(f"     - 지역: {'✅' if region_ok else '❌'} {region_reason}")
+
+        if all_pass:
+            verified.append(prop)
+
+    print(f"\n[📌 검증 결과] {len(filtered)}건 중 {len(verified)}건 통과")
+
+    new_state = {**state, "filtered_results": verified}
+    if not verified:
+        retry = state.get("verify_retry_count", 0) + 1
+        new_state["verify_retry_count"] = retry
+        print(f"[♻️ 통과 매물 0건 → 재검색 시도 {retry}회차]")
+    return new_state
+
+
 def recommend_node(state: AgentState) -> AgentState:
     """필터링된 매물을 바탕으로 자연어 추천 텍스트를 생성합니다."""
     llm = _get_llm()

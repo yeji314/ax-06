@@ -128,6 +128,7 @@ def run_agent(user_input: str):
         "filtered_results": [],
         "recommendations": "",
         "retry_count": 0,
+        "verify_retry_count": 0,
         "messages": [],
     }
 

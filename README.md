@@ -27,10 +27,17 @@ LangGraph 기반 State Machine으로 사용자의 조건(지역, 예산, 면적 
    │
    ▼ (is_valid=True 또는 retry>=2)
 ┌─────────────────────┐
-│ search_and_filter   │  ← 매물 검색 + 조건 필터링 + 점수 계산
+│ search_and_filter   │  ← LLM이 조건 기반 매물 생성 + 점수 필터링
 └─────────────────────┘
    │
    ▼
+┌─────────────────────┐
+│     verify          │  ← 가격/유형/지역 필수조건 재검증
+└─────────────────────┘
+   │
+   ├── 통과 매물 0건 & 재시도 < 2 ──▶ (search로 복귀, 재생성)
+   │
+   ▼ (통과 매물 ≥ 1 또는 재시도 ≥ 2)
 ┌─────────────────────┐
 │    recommend        │  ← 자연어 추천 텍스트 생성 (LLM)
 └─────────────────────┘
@@ -139,19 +146,33 @@ python main.py
 
 ## 🔧 사용 Tool 설명
 
-### `search_properties` (tools/search_tool.py)
-- **역할**: `data/mock_properties.json`에서 지역/거래유형/방종류 조건으로 1차 검색
-- **입력**: `region`, `deal_type`, `property_type` (모두 선택)
-- **출력**: 조건에 맞는 매물 목록
+### `llm_generate_properties` (tools/llm_search_tool.py)
+- **역할**: Agent(LLM)가 사용자 조건에 부합하는 현실적인 매물을 실시간 생성
+- **입력**: `condition` (위치·거래유형·금액·면적·세대수·주차·역까지 분·방/욕실·층/방향·연식 등)
+- **출력**: JSON 매물 리스트 (기본 6개)
 
 ### `filter_and_score` (tools/filter_tool.py)
-- **역할**: 검색 결과를 가격/면적 조건으로 2차 필터링하고 점수 계산 후 정렬
+- **역할**: 생성 매물을 전체 조건으로 2차 필터링하고 점수 계산 후 정렬
 - **점수 기준**:
   - 가격 조건 충족: +30점
   - 면적 조건 충족: +20점
   - 역세권(도보 7분 이내): +15점
+  - 주차 가능: +5점
+  - 세대수/구조/방향/연식 등 선택 조건 보너스: 항목당 +5점
   - features 개수 × 5점
 - **출력**: 점수 내림차순 상위 5개 매물
+
+### `verify_node` (agent/nodes.py)
+- **역할**: 추천 직전에 **가격·유형·지역 3대 필수조건**을 매물별로 재검증
+- **검증 항목**:
+  - **가격**: `deal_type`별로 `max_deposit`/`max_monthly`/`max_price` 상한 준수 여부
+  - **유형**: 사용자가 지정한 `deal_type`(월세/전세/매매), `property_type`(원룸/아파트 등) 정확히 일치
+  - **지역**: 사용자 `region` 문자열이 매물의 `region`/`district`/`subway`/`title` 중 하나에 포함
+- **동작**:
+  - 탈락한 매물은 `filtered_results`에서 제거하고 매물별 ✅/❌ 및 사유 로그 출력
+  - **통과 매물이 0건이면 `search`로 되돌아가 매물을 다시 생성** (최대 2회 재시도)
+  - 재시도 후에도 통과 매물이 없으면 `recommend`가 조건 완화 제안 메시지 출력
+- **출처**: LLM 생성 매물이 조건을 빗겨나갈 가능성을 막는 최종 안전장치
 
 ---
 
@@ -167,11 +188,12 @@ final-ax6/
 │   ├── __init__.py
 │   ├── state.py             # AgentState / UserCondition TypedDict
 │   ├── graph.py             # LangGraph 워크플로우
-│   └── nodes.py             # 5개 노드 로직
+│   └── nodes.py             # 6개 노드 로직 (parse / validate / clarify / search / verify / recommend)
 ├── tools/
 │   ├── __init__.py
-│   ├── search_tool.py       # 매물 검색 Tool
+│   ├── llm_search_tool.py   # LLM 매물 생성 Tool
+│   ├── search_tool.py       # (폴백) Mock 검색 Tool
 │   └── filter_tool.py       # 조건 필터링 Tool
 └── data/
-    └── mock_properties.json # Mock 매물 데이터 (18개)
+    └── mock_properties.json # (폴백) Mock 매물 데이터 (18개)
 ```
