@@ -68,7 +68,12 @@ cp .env.example .env
 `.env` 파일 내용:
 ```
 OPENAI_API_KEY=sk-your-api-key-here
+# 선택: Tavily 웹 검색 키 (https://app.tavily.com 무료 발급)
+TAVILY_API_KEY=tvly-your-api-key-here
 ```
+
+- `OPENAI_API_KEY`: 필수 (조건 파싱·매물 생성·추천 멘트에 사용)
+- `TAVILY_API_KEY`: 선택. 설정하면 Agent가 **실시간 웹 검색**으로 최신 시세/단지 정보를 수집해 매물 생성 근거로 사용합니다. 미설정 시 LLM 단독 생성.
 
 ---
 
@@ -146,9 +151,16 @@ python main.py
 
 ## 🔧 사용 Tool 설명
 
+### `search_web` (tools/web_search_tool.py)
+- **역할**: Tavily API로 부동산 관련 정보를 **실시간 웹 검색** (네이버 부동산·호갱노노·실거래가 사이트 우선)
+- **입력**: `condition` (조건으로 쿼리 자동 생성)
+- **출력**: 검색 결과 리스트 `[{title, url, content}, ...]`
+- **동작**: `TAVILY_API_KEY` 없으면 조용히 빈 리스트 반환 (매물 생성 흐름 중단 없음)
+
 ### `llm_generate_properties` (tools/llm_search_tool.py)
 - **역할**: Agent(LLM)가 사용자 조건에 부합하는 현실적인 매물을 실시간 생성
 - **입력**: `condition` (위치·거래유형·금액·면적·세대수·주차·역까지 분·방/욕실·층/방향·연식 등)
+- **동작**: 내부적으로 `search_web`을 먼저 호출해 웹 검색 결과를 LLM 프롬프트에 주입 → **hallucination 완화**
 - **출력**: JSON 매물 리스트 (기본 6개)
 
 ### `filter_and_score` (tools/filter_tool.py)
@@ -191,7 +203,8 @@ final-ax6/
 │   └── nodes.py             # 6개 노드 로직 (parse / validate / clarify / search / verify / recommend)
 ├── tools/
 │   ├── __init__.py
-│   ├── llm_search_tool.py   # LLM 매물 생성 Tool
+│   ├── web_search_tool.py   # Tavily 웹 검색 Tool
+│   ├── llm_search_tool.py   # LLM 매물 생성 Tool (웹 검색 결과 주입)
 │   ├── search_tool.py       # (폴백) Mock 검색 Tool
 │   └── filter_tool.py       # 조건 필터링 Tool
 └── data/

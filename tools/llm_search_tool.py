@@ -5,6 +5,8 @@ from typing import List
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from tools.web_search_tool import search_web, format_web_context
+
 
 def _get_llm() -> ChatOpenAI:
     # 약간의 다양성을 위해 temperature를 살짝 올림
@@ -14,6 +16,7 @@ def _get_llm() -> ChatOpenAI:
 def llm_generate_properties(condition: dict, count: int = 6) -> List[dict]:
     """
     LLM을 이용해 사용자 조건에 맞는 현실적인 부동산 매물 목록을 생성합니다.
+    가능한 경우 Tavily 웹 검색 결과를 근거로 함께 제공합니다.
 
     Args:
         condition: 사용자 조건 dict (region, deal_type, max_deposit 등)
@@ -24,14 +27,25 @@ def llm_generate_properties(condition: dict, count: int = 6) -> List[dict]:
     """
     llm = _get_llm()
 
+    # 1) 웹 검색으로 실시간 시세·단지 정보 수집
+    web_results = search_web(condition, max_results=5)
+    web_context = format_web_context(web_results)
+
+    if web_results:
+        print(f"[🌐 웹 검색 {len(web_results)}건 수집 → LLM 프롬프트 주입]")
+        for r in web_results:
+            print(f"  - {r['title'][:60]}")
+    else:
+        print("[🌐 웹 검색 결과 없음 (TAVILY_API_KEY 미설정 또는 실패) → LLM 단독 생성]")
+
     condition_text = json.dumps(condition, ensure_ascii=False, indent=2)
 
     system_prompt = (
         "당신은 대한민국 부동산 전문 상담사입니다. "
         f"사용자의 검색 조건에 맞는 현실적이고 다양한 매물 {count}개를 생성해주세요.\n\n"
         "규칙:\n"
-        "- 실제 존재하는 지역·지하철역 이름을 사용하세요 (예: 서울역 근처 → 중구 남대문로/회현동/봉래동, "
-        "용산구 동자동, 1·4호선 서울역·시청역·숙대입구역).\n"
+        "- 아래 '실시간 웹 검색 결과'가 있으면 거기 나오는 실제 단지명/지역/시세를 우선 참조.\n"
+        "- 실제 존재하는 지역·지하철역 이름을 사용하세요.\n"
         "- 가격은 해당 지역의 실제 시세 수준을 반영 (단위: 만원).\n"
         "- 매물 유형/층/방향/연식/주차 여부 등은 매물마다 다양하게.\n"
         "- 사용자 조건(지역/거래유형/금액/면적/주차 등)에 가능한 한 부합하도록.\n"
@@ -61,7 +75,11 @@ def llm_generate_properties(condition: dict, count: int = 6) -> List[dict]:
         "}]"
     )
 
-    user_message = f"사용자 조건:\n{condition_text}\n\n위 조건에 맞는 매물 {count}개 JSON 배열로 생성."
+    user_message_parts = [f"사용자 조건:\n{condition_text}"]
+    if web_context:
+        user_message_parts.append(web_context)
+    user_message_parts.append(f"위 조건에 맞는 매물 {count}개 JSON 배열로 생성.")
+    user_message = "\n\n".join(user_message_parts)
 
     try:
         response = llm.invoke([
