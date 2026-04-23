@@ -50,6 +50,12 @@ def llm_generate_properties(condition: dict, count: int = 6) -> List[dict]:
         "- 매물 유형/층/방향/연식/주차 여부 등은 매물마다 다양하게.\n"
         "- 사용자 조건(지역/거래유형/금액/면적/주차 등)에 가능한 한 부합하도록.\n"
         "- JSON 배열로만 응답. 코드블록/설명/주석 금지.\n\n"
+        "🚨 price 필드 규칙 (매우 중요, 절대 0으로 두지 말 것):\n"
+        "- 월세: {\"deposit\": 보증금(만원), \"monthly\": 월세(만원)}\n"
+        "- 전세: {\"deposit\": 전세보증금(만원), \"monthly\": 0}\n"
+        "- 매매: {\"deposit\": 매매가(만원), \"monthly\": 0}  ← 매매도 반드시 deposit에 매매가 기입!\n"
+        "  예) 20억 매매 → {\"deposit\": 200000, \"monthly\": 0}\n"
+        "  예) 15억 매매 → {\"deposit\": 150000, \"monthly\": 0}\n\n"
         "각 매물의 필수 필드:\n"
         "[{\n"
         '  "id": "L001"~"L0NN",\n'
@@ -58,7 +64,7 @@ def llm_generate_properties(condition: dict, count: int = 6) -> List[dict]:
         '  "district": "동 이름",\n'
         '  "type": "원룸/투룸/쓰리룸/아파트/오피스텔",\n'
         '  "deal_type": "월세/전세/매매",\n'
-        '  "price": {"deposit": 숫자, "monthly": 숫자(매매/전세면 0)},\n'
+        '  "price": {"deposit": 숫자(위 규칙 참조), "monthly": 숫자(매매/전세면 0)},\n'
         '  "area_m2": 숫자,\n'
         '  "floor": 숫자, "total_floors": 숫자,\n'
         '  "households": 숫자,\n'

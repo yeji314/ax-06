@@ -202,17 +202,33 @@ def clarify_node(state: AgentState) -> AgentState:
     }
 
 
+def _krw_format(amount_manwon: int) -> str:
+    """만원 단위 금액을 '2억 3,000만원' 형식으로 포맷."""
+    if not amount_manwon:
+        return "미정(LLM 응답 누락)"
+    try:
+        amount = int(amount_manwon)
+    except (TypeError, ValueError):
+        return str(amount_manwon)
+    eok, man = divmod(amount, 10000)
+    if eok and man:
+        return f"{eok}억 {man:,}만원"
+    if eok:
+        return f"{eok}억원"
+    return f"{man:,}만원"
+
+
 def _format_price(prop: dict) -> str:
     deal_type = prop.get("deal_type", "")
     price = prop.get("price", {})
     deposit = price.get("deposit", 0)
     monthly = price.get("monthly", 0)
     if deal_type == "월세":
-        return f"보증금 {deposit}만원 / 월세 {monthly}만원"
+        return f"보증금 {_krw_format(deposit)} / 월세 {monthly}만원"
     if deal_type == "전세":
-        return f"전세 {deposit}만원"
+        return f"전세 {_krw_format(deposit)}"
     if deal_type == "매매":
-        return f"매매 {deposit}만원"
+        return f"매매 {_krw_format(deposit)}"
     return f"{deposit}/{monthly}"
 
 
