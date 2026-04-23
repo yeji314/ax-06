@@ -26,12 +26,25 @@ def _parse_with_json(llm: ChatOpenAI, user_input: str) -> dict:
         '  "max_monthly": 숫자 또는 null,\n'
         '  "max_price": 숫자 또는 null,\n'
         '  "min_area": 숫자 또는 null,\n'
-        '  "property_type": "원룸 또는 투룸 또는 쓰리룸 또는 아파트 또는 오피스텔 또는 null"\n'
+        '  "property_type": "원룸 또는 투룸 또는 쓰리룸 또는 아파트 또는 오피스텔 또는 null",\n'
+        '  "min_households": 숫자 또는 null,\n'
+        '  "parking_required": true/false 또는 null,\n'
+        '  "building_structure": "계단식 또는 복도식 또는 null",\n'
+        '  "max_subway_minutes": 숫자 또는 null,\n'
+        '  "min_rooms": 숫자 또는 null,\n'
+        '  "min_bathrooms": 숫자 또는 null,\n'
+        '  "preferred_floor": "저층 또는 중층 또는 고층 또는 null",\n'
+        '  "direction": "남향 또는 동향 또는 서향 또는 북향 또는 남동향 또는 남서향 또는 null",\n'
+        '  "max_building_age": 숫자 또는 null\n'
         "}\n\n"
         "규칙:\n"
         "- region: '성동구', '마포구', '강남구' 같은 구/동 이름 추출\n"
         "- deal_type: '월세', '전세', '매매' 중 언급된 것. 둘 다 언급 시 더 명확한 것 선택\n"
         "- 금액은 만원 단위 숫자만 (예: 500만원→500, 3000만원→3000, 1억→10000)\n"
+        "- min_households: '세대수 OOO 이상', '대단지(500세대 이상)' 같은 표현에서 숫자 추출\n"
+        "- parking_required: '주차 가능', '주차 필수' 등이면 true\n"
+        "- max_subway_minutes: '역에서 도보 N분 이내' 같은 표현에서 N 추출\n"
+        "- max_building_age: '10년 이내', '신축(5년 이내)' 같은 표현에서 숫자 추출\n"
         "- 명시되지 않은 필드는 반드시 null\n"
         "- JSON 외 다른 텍스트 없이 JSON만 응답"
     )
@@ -64,6 +77,15 @@ def parse_condition_node(state: AgentState) -> AgentState:
         "max_price": parsed.get("max_price") or None,
         "min_area": parsed.get("min_area") or None,
         "property_type": parsed.get("property_type") or None,
+        "min_households": parsed.get("min_households") or None,
+        "parking_required": parsed.get("parking_required"),
+        "building_structure": parsed.get("building_structure") or None,
+        "max_subway_minutes": parsed.get("max_subway_minutes") or None,
+        "min_rooms": parsed.get("min_rooms") or None,
+        "min_bathrooms": parsed.get("min_bathrooms") or None,
+        "preferred_floor": parsed.get("preferred_floor") or None,
+        "direction": parsed.get("direction") or None,
+        "max_building_age": parsed.get("max_building_age") or None,
     }
 
     messages = list(state.get("messages", [])) + [
@@ -141,6 +163,39 @@ def clarify_node(state: AgentState) -> AgentState:
     }
 
 
+def _format_price(prop: dict) -> str:
+    deal_type = prop.get("deal_type", "")
+    price = prop.get("price", {})
+    deposit = price.get("deposit", 0)
+    monthly = price.get("monthly", 0)
+    if deal_type == "월세":
+        return f"보증금 {deposit}만원 / 월세 {monthly}만원"
+    if deal_type == "전세":
+        return f"전세 {deposit}만원"
+    if deal_type == "매매":
+        return f"매매 {deposit}만원"
+    return f"{deposit}/{monthly}"
+
+
+def _log_property_details(prop: dict) -> None:
+    """매물 상세 정보를 요청된 항목 형식으로 로그 출력."""
+    title = prop.get("title", "-")
+    print(f"  🏠 [{prop.get('id', '-')}] {title}")
+    print(f"     - 위치: {prop.get('region', '-')} {prop.get('district', '-')}")
+    print(f"     - 금액대: {_format_price(prop)}")
+    print(f"     - 면적: {prop.get('area_m2', '-')}m²")
+    print(f"     - 세대수: {prop.get('households', '-')}세대")
+    print(f"     - 주차여부: {'가능' if prop.get('parking') else '불가'}")
+    print(f"     - 계단식/복도식: {prop.get('building_structure', '-')}")
+    print(f"     - 근처 역까지: {prop.get('subway_minutes', '-')}분 ({prop.get('subway', '-')})")
+    print(f"     - 방/욕실: {prop.get('rooms', '-')}개 / {prop.get('bathrooms', '-')}개")
+    print(
+        f"     - 층/방향: {prop.get('floor', '-')}층"
+        f"(총 {prop.get('total_floors', '-')}층) / {prop.get('direction', '-')}"
+    )
+    print(f"     - 연식: {prop.get('built_year', '-')}년식")
+
+
 def search_and_filter_node(state: AgentState) -> AgentState:
     """매물을 검색하고 필터링합니다."""
     condition = state.get("condition", {})
@@ -148,6 +203,29 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     region = condition.get("region")
     deal_type = condition.get("deal_type")
     property_type = condition.get("property_type")
+
+    print("\n[🔎 검색 조건]")
+    for key, label in [
+        ("region", "위치"),
+        ("deal_type", "거래유형"),
+        ("property_type", "방 종류"),
+        ("max_deposit", "최대 보증금(만원)"),
+        ("max_monthly", "최대 월세(만원)"),
+        ("max_price", "최대 가격(만원)"),
+        ("min_area", "최소 면적(m²)"),
+        ("min_households", "최소 세대수"),
+        ("parking_required", "주차 필수 여부"),
+        ("building_structure", "계단식/복도식"),
+        ("max_subway_minutes", "역까지 최대 도보(분)"),
+        ("min_rooms", "최소 방 개수"),
+        ("min_bathrooms", "최소 욕실 개수"),
+        ("preferred_floor", "선호 층"),
+        ("direction", "선호 방향"),
+        ("max_building_age", "최대 건물 연식(년)"),
+    ]:
+        val = condition.get(key)
+        if val is not None:
+            print(f"  - {label}: {val}")
 
     search_results = search_properties.invoke({
         "region": region,
@@ -163,7 +241,16 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     if not search_results and deal_type:
         search_results = search_properties.invoke({"region": None, "deal_type": deal_type, "property_type": None})
 
+    print(f"\n[📋 1차 검색 결과: {len(search_results)}건]")
+    for prop in search_results:
+        _log_property_details(prop)
+
     filtered_results = filter_and_score.invoke({"properties": search_results, "condition": condition})
+
+    print(f"\n[✅ 필터링 결과: {len(filtered_results)}건]")
+    for prop in filtered_results:
+        _log_property_details(prop)
+        print(f"     - 매칭점수: {prop.get('score', 0)}점")
 
     return {
         **state,

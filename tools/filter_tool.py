@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from langchain_core.tools import tool
 
 
@@ -16,9 +18,21 @@ def filter_and_score(properties: list, condition: dict) -> list:
     return filter_and_score_raw(properties, condition)
 
 
+def _floor_band(floor: int, total: int) -> str:
+    if not total:
+        return ""
+    ratio = floor / total
+    if ratio <= 1 / 3:
+        return "저층"
+    if ratio <= 2 / 3:
+        return "중층"
+    return "고층"
+
+
 def filter_and_score_raw(properties: list, condition: dict) -> list:
     """Tool 래퍼 없이 직접 호출하는 버전."""
     filtered = []
+    current_year = datetime.now().year
 
     for p in properties:
         prop = dict(p)
@@ -52,6 +66,53 @@ def filter_and_score_raw(properties: list, condition: dict) -> list:
         if min_area and prop.get("area_m2", 0) < min_area:
             continue
 
+        # 세대수
+        min_households = condition.get("min_households")
+        if min_households and prop.get("households", 0) < min_households:
+            continue
+
+        # 주차
+        parking_required = condition.get("parking_required")
+        if parking_required and not prop.get("parking"):
+            continue
+
+        # 계단식/복도식
+        building_structure = condition.get("building_structure")
+        if building_structure and prop.get("building_structure") != building_structure:
+            continue
+
+        # 역까지 도보 시간
+        max_subway_minutes = condition.get("max_subway_minutes")
+        if max_subway_minutes and prop.get("subway_minutes", 99) > max_subway_minutes:
+            continue
+
+        # 방/욕실 개수
+        min_rooms = condition.get("min_rooms")
+        if min_rooms and prop.get("rooms", 0) < min_rooms:
+            continue
+        min_bathrooms = condition.get("min_bathrooms")
+        if min_bathrooms and prop.get("bathrooms", 0) < min_bathrooms:
+            continue
+
+        # 층
+        preferred_floor = condition.get("preferred_floor")
+        if preferred_floor:
+            band = _floor_band(prop.get("floor", 0), prop.get("total_floors", 0))
+            if band and band != preferred_floor:
+                continue
+
+        # 방향
+        direction = condition.get("direction")
+        if direction and direction not in (prop.get("direction") or ""):
+            continue
+
+        # 연식
+        max_building_age = condition.get("max_building_age")
+        if max_building_age and prop.get("built_year"):
+            age = current_year - prop["built_year"]
+            if age > max_building_age:
+                continue
+
         # 점수 계산
         # 가격 조건 충족: +30점
         score += 30
@@ -62,12 +123,25 @@ def filter_and_score_raw(properties: list, condition: dict) -> list:
         elif not min_area:
             score += 20
 
-        # 지하철 역세권 키워드 포함: +15점
-        subway = prop.get("subway", "")
-        if "도보" in subway and any(
-            m in subway for m in ["1분", "2분", "3분", "4분", "5분", "6분", "7분"]
-        ):
+        # 역세권(도보 7분 이내): +15점
+        if prop.get("subway_minutes", 99) <= 7:
             score += 15
+
+        # 주차 가능: +5점
+        if prop.get("parking"):
+            score += 5
+
+        # 조건과 매칭되는 추가 항목 보너스
+        if min_households and prop.get("households", 0) >= min_households:
+            score += 5
+        if building_structure and prop.get("building_structure") == building_structure:
+            score += 5
+        if direction and direction in (prop.get("direction") or ""):
+            score += 5
+        if max_building_age and prop.get("built_year"):
+            age = current_year - prop["built_year"]
+            if age <= max_building_age:
+                score += 5
 
         # features 개수 × 5점
         features = prop.get("features", [])
