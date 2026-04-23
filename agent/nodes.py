@@ -7,8 +7,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from agent.state import AgentState, UserCondition
-from tools.search_tool import search_properties
 from tools.filter_tool import filter_and_score
+from tools.llm_search_tool import llm_generate_properties
 
 
 def _get_llm() -> ChatOpenAI:
@@ -38,7 +38,11 @@ def _parse_with_json(llm: ChatOpenAI, user_input: str) -> dict:
         '  "max_building_age": 숫자 또는 null\n'
         "}\n\n"
         "규칙:\n"
-        "- region: '성동구', '마포구', '강남구' 같은 구/동 이름 추출\n"
+        "- region: 위치를 나타내는 모든 표현 추출\n"
+        "  · 구/동 이름: '성동구', '마포구', '강남구', '공덕동' 등\n"
+        "  · 지하철역 이름: '서울역', '강남역', '홍대입구역' (뒤에 '역' 붙은 형태 그대로)\n"
+        "  · 랜드마크/지역명: '한강', '잠실', '이태원' 등\n"
+        "  · 여러 개가 언급되면 가장 구체적인 하나만 선택\n"
         "- deal_type: '월세', '전세', '매매' 중 언급된 것. 둘 다 언급 시 더 명확한 것 선택\n"
         "- 금액은 만원 단위 숫자만 (예: 500만원→500, 3000만원→3000, 1억→10000)\n"
         "- min_households: '세대수 OOO 이상', '대단지(500세대 이상)' 같은 표현에서 숫자 추출\n"
@@ -129,10 +133,22 @@ def clarify_node(state: AgentState) -> AgentState:
     if not condition.get("deal_type"):
         missing.append("거래 유형(월세/전세/매매)")
 
+    examples = {
+        "희망 지역": "예: '서울 마포구', '강남구 역삼동', '송파구'",
+        "거래 유형(월세/전세/매매)": "예: '월세', '전세', '매매'",
+    }
+    missing_with_examples = "\n".join(
+        f"- {m} ({examples.get(m, '')})" for m in missing
+    )
+
     system_prompt = (
-        "부동산 상담 AI입니다. 사용자가 부동산을 검색하려 하는데 "
-        f"다음 정보가 부족합니다: {', '.join(missing)}. "
-        "친절하게 해당 정보를 물어봐 주세요. 짧고 명확하게."
+        "당신은 부동산 상담 AI입니다. 사용자의 질문이 조금 더 구체적이면 "
+        "더 정확한 매물을 찾아드릴 수 있습니다.\n"
+        "아래 부족한 정보에 대해 **사과 없이**, 사용자가 바로 답할 수 있도록 "
+        "예시와 선택지를 곁들여 한 번에 재질문해주세요.\n"
+        "'죄송합니다', '찾을 수 없습니다' 같은 사과/부정 표현은 절대 쓰지 마세요.\n"
+        f"부족한 정보:\n{missing_with_examples}\n\n"
+        "출력 형식: 한두 문장으로 친근하게 재질문 + 각 항목별 예시를 간단히 제시."
     )
 
     try:
@@ -142,9 +158,12 @@ def clarify_node(state: AgentState) -> AgentState:
         ])
         question = response.content
     except Exception:
-        question = f"죄송합니다. {', '.join(missing)}을(를) 알려주시면 더 정확한 매물을 찾아드릴 수 있습니다."
+        question = (
+            "조금 더 구체적으로 알려주시면 딱 맞는 매물을 찾아드릴게요!\n"
+            f"{missing_with_examples}"
+        )
 
-    print(f"\n🤔 추가 정보 필요: {question}")
+    print(f"\n🤔 추가 정보가 필요해요: {question}")
     print("👉 ", end="", flush=True)
 
     try:
@@ -197,12 +216,8 @@ def _log_property_details(prop: dict) -> None:
 
 
 def search_and_filter_node(state: AgentState) -> AgentState:
-    """매물을 검색하고 필터링합니다."""
+    """LLM이 조건에 맞는 매물을 생성하고, 그중 적합도 순으로 필터링합니다."""
     condition = state.get("condition", {})
-
-    region = condition.get("region")
-    deal_type = condition.get("deal_type")
-    property_type = condition.get("property_type")
 
     print("\n[🔎 검색 조건]")
     for key, label in [
@@ -227,21 +242,10 @@ def search_and_filter_node(state: AgentState) -> AgentState:
         if val is not None:
             print(f"  - {label}: {val}")
 
-    search_results = search_properties.invoke({
-        "region": region,
-        "deal_type": deal_type,
-        "property_type": property_type,
-    })
+    print("\n[🤖 Agent가 조건에 맞는 매물 생성 중...]")
+    search_results = llm_generate_properties(condition, count=6)
 
-    # 결과가 없으면 region만으로 재검색
-    if not search_results and region:
-        search_results = search_properties.invoke({"region": region, "deal_type": None, "property_type": None})
-
-    # 그래도 없으면 deal_type만으로 재검색
-    if not search_results and deal_type:
-        search_results = search_properties.invoke({"region": None, "deal_type": deal_type, "property_type": None})
-
-    print(f"\n[📋 1차 검색 결과: {len(search_results)}건]")
+    print(f"\n[📋 Agent 생성 매물: {len(search_results)}건]")
     for prop in search_results:
         _log_property_details(prop)
 
@@ -266,9 +270,22 @@ def recommend_node(state: AgentState) -> AgentState:
     condition = state.get("condition", {})
 
     if not filtered:
+        hints = []
+        if condition.get("max_deposit") or condition.get("max_monthly") or condition.get("max_price"):
+            hints.append("• 금액 상한을 조금 더 여유 있게 잡아보시겠어요? (예: 보증금/월세 +20%)")
+        if condition.get("min_area"):
+            hints.append("• 최소 면적 기준을 낮춰보세요 (예: 30m² 이상 → 20m² 이상)")
+        if condition.get("property_type"):
+            hints.append(f"• 방 종류를 '{condition['property_type']}' 외 다른 유형도 함께 고려해보세요")
+        if condition.get("region"):
+            hints.append(f"• '{condition['region']}' 인근 지역도 함께 찾아드릴까요?")
+        if not hints:
+            hints.append("• 희망 지역·거래유형·금액 중 한 가지를 조정해 다시 알려주세요")
+
         recommendations = (
-            "😔 죄송합니다. 입력하신 조건에 맞는 매물을 찾을 수 없습니다.\n"
-            "조건을 조금 완화하시거나 다른 지역/거래유형으로 다시 검색해 보세요."
+            "🔎 조건을 조금만 조정해주시면 바로 다시 찾아드릴 수 있어요!\n"
+            + "\n".join(hints)
+            + "\n\n어떤 기준을 바꿔보시겠어요?"
         )
         return {**state, "recommendations": recommendations}
 
