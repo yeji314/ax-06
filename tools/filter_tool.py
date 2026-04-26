@@ -1,154 +1,120 @@
 from datetime import datetime
 
-from langchain_core.tools import tool
-
-
-@tool
-def filter_and_score(properties: list, condition: dict) -> list:
-    """
-    매물을 조건에 맞게 필터링하고 점수를 계산합니다.
-
-    Args:
-        properties: 검색된 매물 목록
-        condition: 사용자 조건 dict
-
-    Returns:
-        점수 기준 내림차순 정렬된 매물 목록 (최대 5개)
-    """
-    return filter_and_score_raw(properties, condition)
-
 
 def _floor_band(floor: int, total: int) -> str:
     if not total:
         return ""
-    ratio = floor / total
-    if ratio <= 1 / 3:
-        return "저층"
-    if ratio <= 2 / 3:
-        return "중층"
+    r = floor / total
+    if r <= 1 / 3: return "저층"
+    if r <= 2 / 3: return "중층"
     return "고층"
 
 
-def filter_and_score_raw(properties: list, condition: dict) -> list:
-    """Tool 래퍼 없이 직접 호출하는 버전."""
-    filtered = []
+def filter_and_score_raw(
+    properties: list,
+    condition: dict,
+    lifestyle: dict = None,
+) -> list:
+    """
+    매물 필터링 + 점수 계산.
+
+    점수 구성:
+      가격 조건 충족    +30
+      면적 조건 충족    +20
+      역세권(7분 이내)  +15
+      주차 가능         +5
+      소프트 조건 매칭  조건당 +5
+      features 수       개당 +3
+      생활권 보너스     lifestyle_score × 0.3 (최대 +30)
+
+    Returns:
+        점수 내림차순, 최대 5개
+    """
+    lifestyle    = lifestyle or {}
+    has_ls       = bool(lifestyle.get("activities") or lifestyle.get("atmosphere") or lifestyle.get("amenities"))
     current_year = datetime.now().year
+    passed       = []
 
     for p in properties:
-        prop = dict(p)
-        score = 0
+        prop      = dict(p)
         deal_type = prop.get("deal_type", "")
-        price = prop.get("price", {})
+        price     = prop.get("price", {})
+        deposit   = price.get("deposit", 0)
+        monthly   = price.get("monthly", 0)
 
-        # 가격 조건 필터링 및 점수
-        price_ok = True
+        # ── 하드 필터 ─────────────────────────────────────────────────────────
+        # 거래유형 (deal_type) 필터 — 전세 요청인데 월세 매물 통과하던 버그 수정
+        cond_deal = condition.get("deal_type")
+        if cond_deal and deal_type != cond_deal:
+            continue
+
+        # 매물 유형 (property_type) 필터 — MOLIT 유형 매핑 포함
+        cond_prop = condition.get("property_type")
+        if cond_prop:
+            TYPE_MAP = {
+                "원룸":    ["빌라"],
+                "투룸":    ["빌라"],
+                "쓰리룸":  ["빌라"],
+                "오피스텔": ["빌라", "아파트"],
+                "아파트":  ["아파트"],
+                "빌라":    ["빌라"],
+            }
+            if prop.get("type", "") not in TYPE_MAP.get(cond_prop, [cond_prop]):
+                continue
+
+        # 가격
         if deal_type == "월세":
-            max_deposit = condition.get("max_deposit")
-            max_monthly = condition.get("max_monthly")
-            if max_deposit and price.get("deposit", 0) > max_deposit:
-                price_ok = False
-            if max_monthly and price.get("monthly", 0) > max_monthly:
-                price_ok = False
+            if condition.get("max_deposit") and deposit > condition["max_deposit"]: continue
+            if condition.get("max_monthly") and monthly > condition["max_monthly"]: continue
         elif deal_type == "전세":
-            max_deposit = condition.get("max_deposit") or condition.get("max_price")
-            if max_deposit and price.get("deposit", 0) > max_deposit:
-                price_ok = False
+            max_d = condition.get("max_deposit") or condition.get("max_price")
+            if max_d and deposit > max_d: continue
         elif deal_type == "매매":
-            max_price = condition.get("max_price") or condition.get("max_deposit")
-            if max_price and price.get("deposit", 0) > max_price:
-                price_ok = False
+            max_p = condition.get("max_price") or condition.get("max_deposit")
+            if max_p and deposit > max_p: continue
 
-        if not price_ok:
-            continue
+        if condition.get("min_area")           and prop.get("area_m2", 0)        < condition["min_area"]:           continue
+        if condition.get("min_households")     and prop.get("households", 0)     < condition["min_households"]:     continue
+        if condition.get("parking_required")   and not prop.get("parking"):                                         continue
+        if condition.get("building_structure") and prop.get("building_structure") != condition["building_structure"]: continue
+        if condition.get("max_subway_minutes") and prop.get("subway_minutes", 99) > condition["max_subway_minutes"]: continue
+        if condition.get("min_rooms")          and prop.get("rooms", 0)           < condition["min_rooms"]:          continue
+        if condition.get("min_bathrooms")      and prop.get("bathrooms", 0)       < condition["min_bathrooms"]:      continue
+        if condition.get("direction")          and condition["direction"] not in (prop.get("direction") or ""):      continue
 
-        # 면적 조건 필터링
-        min_area = condition.get("min_area")
-        if min_area and prop.get("area_m2", 0) < min_area:
-            continue
-
-        # 세대수
-        min_households = condition.get("min_households")
-        if min_households and prop.get("households", 0) < min_households:
-            continue
-
-        # 주차
-        parking_required = condition.get("parking_required")
-        if parking_required and not prop.get("parking"):
-            continue
-
-        # 계단식/복도식
-        building_structure = condition.get("building_structure")
-        if building_structure and prop.get("building_structure") != building_structure:
-            continue
-
-        # 역까지 도보 시간
-        max_subway_minutes = condition.get("max_subway_minutes")
-        if max_subway_minutes and prop.get("subway_minutes", 99) > max_subway_minutes:
-            continue
-
-        # 방/욕실 개수
-        min_rooms = condition.get("min_rooms")
-        if min_rooms and prop.get("rooms", 0) < min_rooms:
-            continue
-        min_bathrooms = condition.get("min_bathrooms")
-        if min_bathrooms and prop.get("bathrooms", 0) < min_bathrooms:
-            continue
-
-        # 층
-        preferred_floor = condition.get("preferred_floor")
-        if preferred_floor:
+        if condition.get("preferred_floor"):
             band = _floor_band(prop.get("floor", 0), prop.get("total_floors", 0))
-            if band and band != preferred_floor:
-                continue
+            if band and band != condition["preferred_floor"]: continue
 
-        # 방향
-        direction = condition.get("direction")
-        if direction and direction not in (prop.get("direction") or ""):
-            continue
+        if condition.get("max_building_age") and prop.get("built_year"):
+            if (current_year - prop["built_year"]) > condition["max_building_age"]: continue
 
-        # 연식
-        max_building_age = condition.get("max_building_age")
-        if max_building_age and prop.get("built_year"):
-            age = current_year - prop["built_year"]
-            if age > max_building_age:
-                continue
+        # ── 점수 계산 ─────────────────────────────────────────────────────────
+        score = 30  # 가격 통과 기본점
 
-        # 점수 계산
-        # 가격 조건 충족: +30점
-        score += 30
+        min_area = condition.get("min_area")
+        score += 20 if (not min_area or prop.get("area_m2", 0) >= min_area) else 0
 
-        # 면적 조건 충족: +20점
-        if min_area and prop.get("area_m2", 0) >= min_area:
-            score += 20
-        elif not min_area:
-            score += 20
+        if prop.get("subway_minutes", 99) <= 7: score += 15
+        if prop.get("parking"):                 score += 5
 
-        # 역세권(도보 7분 이내): +15점
-        if prop.get("subway_minutes", 99) <= 7:
-            score += 15
+        if condition.get("min_households")     and prop.get("households", 0) >= condition["min_households"]:      score += 5
+        if condition.get("building_structure") and prop.get("building_structure") == condition["building_structure"]: score += 5
+        if condition.get("direction")          and condition["direction"] in (prop.get("direction") or ""):        score += 5
+        if condition.get("max_building_age")   and prop.get("built_year"):
+            if (current_year - prop["built_year"]) <= condition["max_building_age"]: score += 5
 
-        # 주차 가능: +5점
-        if prop.get("parking"):
-            score += 5
+        score += len(prop.get("features", [])) * 3
 
-        # 조건과 매칭되는 추가 항목 보너스
-        if min_households and prop.get("households", 0) >= min_households:
-            score += 5
-        if building_structure and prop.get("building_structure") == building_structure:
-            score += 5
-        if direction and direction in (prop.get("direction") or ""):
-            score += 5
-        if max_building_age and prop.get("built_year"):
-            age = current_year - prop["built_year"]
-            if age <= max_building_age:
-                score += 5
-
-        # features 개수 × 5점
-        features = prop.get("features", [])
-        score += len(features) * 5
+        # 생활권 보너스
+        if has_ls:
+            ls_score = prop.get("lifestyle_score", 0)
+            if isinstance(ls_score, (int, float)) and ls_score > 0:
+                bonus = int(ls_score * 0.3)
+                score += bonus
 
         prop["score"] = score
-        filtered.append(prop)
+        passed.append(prop)
 
-    filtered.sort(key=lambda x: x["score"], reverse=True)
-    return filtered[:5]
+    passed.sort(key=lambda x: x["score"], reverse=True)
+    return passed[:5]

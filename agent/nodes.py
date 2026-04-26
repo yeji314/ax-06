@@ -1,112 +1,164 @@
 import json
 import re
-from typing import Optional
+from typing import Optional, List # 추가
+from pydantic import BaseModel, Field # 추가
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langsmith import traceable
 
-from agent.state import AgentState, UserCondition
+from agent.state import AgentState, UserCondition, UserLifestyle
 from tools.filter_tool import filter_and_score_raw
-from tools.llm_search_tool import llm_generate_properties
+from tools.web_search_tool import format_web_context, search_neighborhood
 
+class LifestyleModel(BaseModel):
+    activities: List[str] = Field(description="['런닝','자전거','등산','수영','헬스'] 중 언급된 것", default_factory=list)
+    atmosphere: Optional[str] = Field(description="'조용한' | '활발한' | '자연친화적' | '카페거리' | '번화가'", default=None)
+    amenities: List[str] = Field(description="['공원','한강','카페','헬스장','마트','병원','학교','편의점'] 중 언급된 것", default_factory=list)
+    raw_keywords: Optional[str] = Field(description="생활권 원문", default=None)
 
-def _get_llm() -> ChatOpenAI:
+class UserConditionModel(BaseModel):
+    region: Optional[str] = Field(description="지역명", default=None)
+    deal_type: Optional[str] = Field(description="'월세' | '전세' | '매매'", default=None)
+    max_deposit: Optional[int] = Field(description="보증금 (만원 단위 정수)", default=None)
+    max_monthly: Optional[int] = Field(description="월세 (만원 단위 정수)", default=None)
+    max_price: Optional[int] = Field(description="매매가 (만원 단위 정수)", default=None)
+    min_area: Optional[float] = Field(description="최소 면적 (m²)", default=None)
+    property_type: Optional[str] = Field(description="'원룸' | '투룸' | '쓰리룸' | '아파트' | '오피스텔'", default=None)
+    min_households: Optional[int] = Field(description="최소 세대수", default=None)
+    parking_required: Optional[bool] = Field(description="주차 필수 여부", default=None)
+    building_structure: Optional[str] = Field(description="'계단식' | '복도식'", default=None)
+    max_subway_minutes: Optional[int] = Field(description="역까지 최대 도보 (분)", default=None)
+    min_rooms: Optional[int] = Field(description="최소 방 개수", default=None)
+    min_bathrooms: Optional[int] = Field(description="최소 욕실 개수", default=None)
+    preferred_floor: Optional[str] = Field(description="'저층' | '중층' | '고층'", default=None)
+    direction: Optional[str] = Field(description="'남향' | '동향' | '서향' | '북향'", default=None)
+    max_building_age: Optional[int] = Field(description="최대 건물 연식", default=None)
+    lifestyle: Optional[LifestyleModel] = None
+
+def _llm() -> ChatOpenAI:
     return ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 
-# ── parse ─────────────────────────────────────────────────────────────────────
+# ── parse_condition_node ──────────────────────────────────────────────────────
+
+
+def _correct_amounts(condition: dict, user_input: str) -> dict:
+    """
+    LLM이 억 단위 금액을 잘못 계산한 경우 Python으로 교정.
+
+    LLM은 '20억'을 20,000(만원)으로 계산하는 오류를 자주 범함.
+    올바른 값: 20억 = 20 × 10,000 = 200,000만원.
+
+    원본 텍스트에서 억 단위를 직접 추출해 파싱된 값과 비교 후 교정.
+    """
+    eok_nums = re.findall(r'(\d+(?:\.\d+)?)\s*억', user_input)
+    if not eok_nums:
+        return condition  # 억 단위 없으면 교정 불필요
+
+    # 억 → 만원 변환 목록 (내림차순)
+    eok_manwon = sorted([int(float(n) * 10000) for n in eok_nums], reverse=True)
+
+    corrected = dict(condition)
+    for field in ("max_deposit", "max_price", "max_monthly"):
+        val = corrected.get(field)
+        if not val:
+            continue
+        for correct_val in eok_manwon:
+            if correct_val <= 0:
+                continue
+            ratio = correct_val / val
+            # 5배 이상 차이나면 LLM 계산 오류로 판단 → 교정
+            if ratio >= 5:
+                print(f"[parse 교정] {field}: {val:,}만 → {correct_val:,}만 (억 단위 재계산)")
+                corrected[field] = correct_val
+                break
+
+    return corrected
+
 
 @traceable(name="parse_condition")
-def _parse_with_json(llm: ChatOpenAI, user_input: str) -> dict:
-    """JSON 응답 방식으로 조건 파싱."""
-    system_prompt = (
-        "사용자의 부동산 검색 조건을 분석해서 아래 JSON 형식으로만 응답하세요.\n"
-        "{\n"
-        '  "region": "지역명 또는 null",\n'
-        '  "deal_type": "월세 또는 전세 또는 매매 또는 null",\n'
-        '  "max_deposit": 숫자 또는 null,\n'
-        '  "max_monthly": 숫자 또는 null,\n'
-        '  "max_price": 숫자 또는 null,\n'
-        '  "min_area": 숫자 또는 null,\n'
-        '  "property_type": "원룸 또는 투룸 또는 쓰리룸 또는 아파트 또는 오피스텔 또는 null",\n'
-        '  "min_households": 숫자 또는 null,\n'
-        '  "parking_required": true/false 또는 null,\n'
-        '  "building_structure": "계단식 또는 복도식 또는 null",\n'
-        '  "max_subway_minutes": 숫자 또는 null,\n'
-        '  "min_rooms": 숫자 또는 null,\n'
-        '  "min_bathrooms": 숫자 또는 null,\n'
-        '  "preferred_floor": "저층 또는 중층 또는 고층 또는 null",\n'
-        '  "direction": "남향 또는 동향 또는 서향 또는 북향 또는 남동향 또는 남서향 또는 null",\n'
-        '  "max_building_age": 숫자 또는 null\n'
-        "}\n\n"
-        "규칙:\n"
-        "- region: 구/동 이름, 지하철역 이름, 랜드마크. 여러 개면 가장 구체적인 하나만 선택\n"
-        "- deal_type: '월세', '전세', '매매' 중 언급된 것\n"
-        "- 금액은 만원 단위 숫자만 (예: 500만원→500, 1억→10000)\n"
-        "- parking_required: '주차 가능', '주차 필수' 등이면 true\n"
-        "- max_subway_minutes: '역에서 도보 N분 이내' 표현에서 N 추출\n"
-        "- max_building_age: '10년 이내', '신축(5년 이내)' 표현에서 숫자 추출\n"
-        "- 명시되지 않은 필드는 반드시 null\n"
-        "- JSON 외 다른 텍스트 없이 JSON만 응답"
-    )
-    response = llm.invoke([
+def _parse_input(user_input: str) -> dict:
+    """자연어 → 매물 스펙 조건 + 생활권 조건 동시 추출 (Pydantic 강제 적용)"""
+    system_prompt = """사용자의 부동산 검색 조건을 분석하여 추출하세요.
+    - 금액은 만원 단위 정수로 변환 (1억→10000)
+    - 면적은 m² 단위로 변환 (1평=3.3m²)
+    """
+    
+    # with_structured_output을 사용하여 완벽한 JSON 포맷을 보장받음
+    structured_llm = _llm().with_structured_output(UserConditionModel)
+    
+    response = structured_llm.invoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_input),
     ])
-    text = response.content.strip()
-    text = re.sub(r"```(?:json)?", "", text).replace("```", "").strip()
-    return json.loads(text)
+    
+    # Pydantic 객체를 Dict로 변환하여 반환
+    return response.model_dump(exclude_none=True)
 
 
 def parse_condition_node(state: AgentState) -> AgentState:
-    """사용자 자연어 입력을 파싱하여 UserCondition을 추출합니다."""
-    llm = _get_llm()
     user_input = state["user_input"]
+    parsed     = {}
 
-    parsed = {}
     try:
-        parsed = _parse_with_json(llm, user_input)
+        parsed = _parse_input(user_input)
     except Exception as e:
         print(f"[parse 오류] {e}")
 
+    # None 제거 후 조건 구성
     condition: UserCondition = {
-        "region":            parsed.get("region") or None,
-        "deal_type":         parsed.get("deal_type") or None,
-        "max_deposit":       parsed.get("max_deposit") or None,
-        "max_monthly":       parsed.get("max_monthly") or None,
-        "max_price":         parsed.get("max_price") or None,
-        "min_area":          parsed.get("min_area") or None,
-        "property_type":     parsed.get("property_type") or None,
-        "min_households":    parsed.get("min_households") or None,
-        "parking_required":  parsed.get("parking_required"),
-        "building_structure":parsed.get("building_structure") or None,
-        "max_subway_minutes":parsed.get("max_subway_minutes") or None,
-        "min_rooms":         parsed.get("min_rooms") or None,
-        "min_bathrooms":     parsed.get("min_bathrooms") or None,
-        "preferred_floor":   parsed.get("preferred_floor") or None,
-        "direction":         parsed.get("direction") or None,
-        "max_building_age":  parsed.get("max_building_age") or None,
+        k: v for k, v in {
+            "region":             parsed.get("region"),
+            "deal_type":          parsed.get("deal_type"),
+            "max_deposit":        parsed.get("max_deposit"),
+            "max_monthly":        parsed.get("max_monthly"),
+            "max_price":          parsed.get("max_price"),
+            "min_area":           parsed.get("min_area"),
+            "property_type":      parsed.get("property_type"),
+            "min_households":     parsed.get("min_households"),
+            "parking_required":   parsed.get("parking_required"),
+            "building_structure": parsed.get("building_structure"),
+            "max_subway_minutes": parsed.get("max_subway_minutes"),
+            "min_rooms":          parsed.get("min_rooms"),
+            "min_bathrooms":      parsed.get("min_bathrooms"),
+            "preferred_floor":    parsed.get("preferred_floor"),
+            "direction":          parsed.get("direction"),
+            "max_building_age":   parsed.get("max_building_age"),
+        }.items() if v is not None
     }
 
-    messages = list(state.get("messages", [])) + [
-        HumanMessage(content=user_input),
-        AIMessage(content=str(condition)),
-    ]
+    raw_ls = parsed.get("lifestyle") or {}
+    lifestyle: UserLifestyle = {
+        "activities":   raw_ls.get("activities") or [],
+        "atmosphere":   raw_ls.get("atmosphere"),
+        "amenities":    raw_ls.get("amenities") or [],
+        "raw_keywords": raw_ls.get("raw_keywords"),
+    }
+
+    # LLM 억 단위 계산 오류 교정
+    condition = _correct_amounts(condition, user_input)
+    print(f"[parse] 조건={condition}")
+    if lifestyle.get("raw_keywords"):
+        print(f"[parse] 생활권={lifestyle}")
 
     return {
         **state,
-        "condition": condition,
-        "clarify_question": None,   # parse 진입 시 초기화
-        "messages": messages,
+        "condition":        condition,
+        "lifestyle":        lifestyle,
+        "clarify_question": None,
+        "messages":         list(state.get("messages", [])) + [
+            HumanMessage(content=user_input),
+            AIMessage(content=str(condition)),
+        ],
     }
 
 
-# ── validate ──────────────────────────────────────────────────────────────────
+# ── validate_node ─────────────────────────────────────────────────────────────
 
 def validate_node(state: AgentState) -> AgentState:
-    """조건의 유효성을 검증합니다."""
-    condition = state.get("condition", {})
+    """지역·거래유형·가격 3개 필수. retry 2회 초과 시 강제 통과."""
+    condition   = state.get("condition", {})
     retry_count = state.get("retry_count", 0)
 
     if retry_count >= 2:
@@ -115,277 +167,224 @@ def validate_node(state: AgentState) -> AgentState:
     has_region    = bool(condition.get("region"))
     has_deal_type = bool(condition.get("deal_type"))
     has_price     = bool(
-        condition.get("max_deposit")
-        or condition.get("max_monthly")
-        or condition.get("max_price")
+        condition.get("max_deposit") or condition.get("max_monthly") or condition.get("max_price")
     )
 
     if has_region and has_deal_type and has_price:
         return {**state, "is_valid": True, "error_message": None}
 
-    missing = []
-    if not has_region:    missing.append("지역")
-    if not has_deal_type: missing.append("거래유형")
-    if not has_price:     missing.append("가격")
-
-    return {
-        **state,
-        "is_valid": False,
-        "error_message": f"필수 조건 누락: {', '.join(missing)}",
-    }
+    missing = [k for k, v in {"지역": has_region, "거래유형": has_deal_type, "가격": has_price}.items() if not v]
+    return {**state, "is_valid": False, "error_message": f"필수 조건 누락: {', '.join(missing)}"}
 
 
-# ── clarify ───────────────────────────────────────────────────────────────────
+# ── clarify_node ──────────────────────────────────────────────────────────────
 
 def clarify_node(state: AgentState) -> AgentState:
     """
-    부족한 조건을 사용자에게 질문합니다.
-
-    stdin을 사용하지 않습니다.
-    clarify_question에 질문을 저장하면 graph가 END로 빠져나가고,
-    API가 프론트엔드에 질문을 반환합니다.
-    사용자가 답변하면 clarify_answer를 포함한 새 요청이 들어와
-    combined_input으로 재파싱됩니다.
+    부족한 조건을 LLM으로 질문 생성 → state 저장 → 그래프 종료.
+    API가 질문을 프론트에 반환하고, 사용자 답변은 다음 요청에 포함됨.
     """
-    llm = _get_llm()
     condition = state.get("condition", {})
-
+    examples  = {
+        "희망 지역":               "예: 서울 마포구, 강남구 역삼동",
+        "거래 유형(월세/전세/매매)": "예: 월세, 전세, 매매",
+        "예산":                   "예: 보증금 3000/월 80, 전세 3억 이하",
+    }
     missing = []
     if not condition.get("region"):    missing.append("희망 지역")
     if not condition.get("deal_type"): missing.append("거래 유형(월세/전세/매매)")
-    if not (condition.get("max_deposit") or condition.get("max_monthly") or condition.get("max_price")):
-        missing.append("예산(가격)")
+    if not any(condition.get(k) for k in ("max_deposit", "max_monthly", "max_price")):
+        missing.append("예산")
 
-    examples = {
-        "희망 지역":               "예: '서울 마포구', '강남구 역삼동', '송파구'",
-        "거래 유형(월세/전세/매매)": "예: '월세', '전세', '매매'",
-        "예산(가격)":              "예: '보증금 3000만/월 80만 이하', '전세 5억 이하', '매매 20억 이하'",
-    }
-    missing_with_examples = "\n".join(
-        f"- {m} ({examples.get(m, '')})" for m in missing
-    )
-
-    system_prompt = (
-        "당신은 부동산 상담 AI입니다. 사용자에게 부족한 정보를 물어보세요.\n"
-        "'죄송합니다', '찾을 수 없습니다' 같은 사과/부정 표현은 절대 쓰지 마세요.\n"
-        f"부족한 정보:\n{missing_with_examples}\n\n"
-        "출력 형식: 한두 문장으로 친근하게 재질문 + 각 항목별 예시를 간단히 제시."
-    )
+    missing_text = "\n".join(f"- {m} ({examples[m]})" for m in missing)
 
     try:
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
+        response = _llm().invoke([
+            SystemMessage(content=(
+                "부동산 상담 AI입니다. 부족한 정보를 친근하게 재질문하세요. "
+                "사과 표현 금지.\n\n부족한 정보:\n" + missing_text
+            )),
             HumanMessage(content=state["user_input"]),
         ])
         question = response.content
     except Exception:
-        question = (
-            "조금 더 구체적으로 알려주시면 딱 맞는 매물을 찾아드릴게요!\n"
-            f"{missing_with_examples}"
-        )
+        question = f"아래 정보를 알려주시면 바로 찾아드릴게요!\n{missing_text}"
 
-    print(f"[clarify] 질문 생성: {question[:60]}...")
+    print(f"[clarify] {question[:60]}...")
 
     return {
         **state,
         "clarify_question": question,
-        "retry_count": state.get("retry_count", 0) + 1,
+        "retry_count":      state.get("retry_count", 0) + 1,
     }
 
 
-# ── search_and_filter ─────────────────────────────────────────────────────────
-
-def _log_property(prop: dict) -> None:
-    print(f"  [{prop.get('id','-')}] {prop.get('title','-')} | "
-          f"{prop.get('region','')} | score={prop.get('score',0)}")
-
+# ── search_and_filter_node ────────────────────────────────────────────────────
 
 @traceable(name="search_and_filter")
 def search_and_filter_node(state: AgentState) -> AgentState:
     """
-    LLM으로 조건에 맞는 매물을 생성하고 필터링합니다.
-    verify 재시도(relaxed=True)면 LLM에 조건 완화 신호를 줍니다.
+    국토부 실거래가 API로 실제 매물 데이터를 조회합니다.
+    데이터가 없으면 LLM 생성 없이 빈 결과를 반환합니다.
     """
-    condition = state.get("condition", {})
-    relaxed   = state.get("relaxed", False)
-    count     = 8 if relaxed else 6   # 재시도 시 더 많이 생성
+    from tools.molit_api import search_real_properties
 
-    print(f"\n[검색] relaxed={relaxed}, count={count}")
+    condition = state.get("condition", {})
+    lifestyle = state.get("lifestyle", {})
+    relaxed   = state.get("relaxed", False)
+
+    print(f"\n[search] 실거래 API 조회 (relaxed={relaxed})")
 
     try:
-        search_results = llm_generate_properties(condition, count=count, relaxed=relaxed)
+        search_results = search_real_properties(condition)
+    except EnvironmentError as e:
+        return {**state, "search_results": [], "filtered_results": [], "error_message": str(e)}
     except Exception as e:
-        error_msg = f"매물 생성 중 오류가 발생했습니다: {e}"
-        print(f"[LLM 오류] {error_msg}")
-        return {
-            **state,
-            "search_results": [],
-            "filtered_results": [],
-            "error_message": error_msg,
-        }
+        return {**state, "search_results": [], "filtered_results": [], "error_message": f"API 오류: {e}"}
 
     if not search_results:
         return {
             **state,
-            "search_results": [],
+            "search_results":   [],
             "filtered_results": [],
-            "error_message": "LLM이 조건에 맞는 매물을 생성하지 못했습니다.",
+            "error_message":    "해당 조건의 실거래 데이터가 없습니다. 지역이나 거래유형을 변경해보세요.",
         }
 
-    print(f"[생성] {len(search_results)}건")
-    for p in search_results:
-        _log_property(p)
+    print(f"[search] {len(search_results)}건 수집")
 
-    # 조건 완화 모드: 일부 소프트 조건(주차, 세대수 등)을 제거하고 필터링
-    filter_condition = dict(condition)
+    # relaxed 모드: 소프트 조건 완화
+    filter_cond = dict(condition)
     if relaxed:
-        for soft_key in ("min_households", "building_structure", "direction", "preferred_floor"):
-            filter_condition.pop(soft_key, None)
-        print("[완화] 소프트 조건(세대수/구조/방향/층) 제거 후 필터링")
+        for key in ("min_households", "building_structure", "direction", "preferred_floor"):
+            filter_cond.pop(key, None)
+        print("[search] 소프트 조건 완화 적용")
 
-    filtered_results = filter_and_score_raw(search_results, filter_condition)
-
-    print(f"[필터] {len(filtered_results)}건 통과")
-    for p in filtered_results:
-        _log_property(p)
+    filtered_results = filter_and_score_raw(search_results, filter_cond, lifestyle)
+    print(f"[search] 필터 통과 {len(filtered_results)}건")
 
     return {
         **state,
-        "search_results": search_results,
+        "search_results":   search_results,
         "filtered_results": filtered_results,
-        "error_message": None,
+        "error_message":    None,
     }
 
 
-# ── verify ────────────────────────────────────────────────────────────────────
+# ── verify_node ───────────────────────────────────────────────────────────────
 
-def _verify_price(prop: dict, condition: dict):
-    deal_type = prop.get("deal_type", "")
-    price     = prop.get("price", {})
-    deposit   = price.get("deposit", 0)
-    monthly   = price.get("monthly", 0)
+def _check_price(prop: dict, condition: dict) -> bool:
+    dt      = prop.get("deal_type", "")
+    deposit = prop.get("price", {}).get("deposit", 0)
+    monthly = prop.get("price", {}).get("monthly", 0)
 
-    if deal_type == "월세":
-        max_d = condition.get("max_deposit")
-        max_m = condition.get("max_monthly")
-        if max_d and deposit > max_d:
-            return False, f"보증금 {deposit} > 최대 {max_d}"
-        if max_m and monthly > max_m:
-            return False, f"월세 {monthly} > 최대 {max_m}"
-        return True, f"보증금 {deposit}/월 {monthly} ≤ 조건"
-    if deal_type == "전세":
+    if dt == "월세":
+        if condition.get("max_deposit") and deposit > condition["max_deposit"]: return False
+        if condition.get("max_monthly") and monthly > condition["max_monthly"]: return False
+    elif dt == "전세":
         max_d = condition.get("max_deposit") or condition.get("max_price")
-        if max_d and deposit > max_d:
-            return False, f"전세가 {deposit} > 최대 {max_d}"
-        return True, f"전세가 {deposit} ≤ 조건"
-    if deal_type == "매매":
+        if max_d and deposit > max_d: return False
+    elif dt == "매매":
         max_p = condition.get("max_price") or condition.get("max_deposit")
-        if max_p and deposit > max_p:
-            return False, f"매매가 {deposit} > 최대 {max_p}"
-        return True, f"매매가 {deposit} ≤ 조건"
-    return False, f"알 수 없는 거래유형: {deal_type}"
+        if max_p and deposit > max_p: return False
+    return True
 
 
-def _verify_type(prop: dict, condition: dict):
-    wanted_deal = condition.get("deal_type")
-    wanted_prop = condition.get("property_type")
-
-    if wanted_deal and prop.get("deal_type") != wanted_deal:
-        return False, f"거래유형 {prop.get('deal_type')} ≠ {wanted_deal}"
-    if wanted_prop and prop.get("type") != wanted_prop:
-        return False, f"방 유형 {prop.get('type')} ≠ {wanted_prop}"
-    return True, "유형 조건 일치"
+def _check_type(prop: dict, condition: dict) -> bool:
+    # deal_type, property_type은 이미 filter에서 처리됨
+    # verify에서는 안전망 역할만 수행
+    if condition.get("deal_type") and prop.get("deal_type") != condition["deal_type"]:
+        return False
+    return True
 
 
-def _verify_region(prop: dict, condition: dict):
+def _check_region(prop: dict, condition: dict) -> bool:
     wanted = condition.get("region")
     if not wanted:
-        return True, "지역 조건 미지정 → 통과"
-    haystack = " ".join(str(prop.get(k, "")) for k in ("region", "district", "subway", "title"))
-    if wanted in haystack:
-        return True, f"'{wanted}' 매칭"
-    return False, f"'{wanted}' 불일치 (매물: {prop.get('region')} {prop.get('district')})"
+        return True
+    # region 필드에는 "마포구 도화동" 형태로 저장됨 (molit_api.py Bug 1 수정)
+    # condition의 region이 "마포구"이면 "마포구 도화동"에서 매칭됨
+    haystack = " ".join(str(prop.get(k, "")) for k in ("region", "district", "title"))
+    # 구 단위 매칭: "마포구" → "마포구" in "마포구 도화동" → True
+    return any(w in haystack for w in wanted.split())
 
 
 @traceable(name="verify")
 def verify_node(state: AgentState) -> AgentState:
-    """추천 매물이 필수 조건(가격/유형/지역)에 부합하는지 점검합니다."""
+    """가격·거래유형·지역 3가지 필수 조건을 재검증합니다."""
     condition = state.get("condition", {})
     filtered  = state.get("filtered_results", [])
 
-    print("\n[검증] 가격 / 유형 / 지역")
+    verified = [
+        p for p in filtered
+        if _check_price(p, condition) and _check_type(p, condition) and _check_region(p, condition)
+    ]
 
-    verified = []
-    for prop in filtered:
-        price_ok,  price_reason  = _verify_price(prop, condition)
-        type_ok,   type_reason   = _verify_type(prop, condition)
-        region_ok, region_reason = _verify_region(prop, condition)
-        all_pass = price_ok and type_ok and region_ok
-
-        status = "✅" if all_pass else "❌"
-        print(f"  {status} [{prop.get('id','-')}] {prop.get('title','-')}")
-        if not all_pass:
-            print(f"     가격:{price_reason} / 유형:{type_reason} / 지역:{region_reason}")
-
-        if all_pass:
-            verified.append(prop)
-
-    print(f"[검증 결과] {len(filtered)}건 중 {len(verified)}건 통과")
+    print(f"[verify] {len(filtered)}건 → {len(verified)}건 통과")
 
     new_state = {**state, "filtered_results": verified}
-
     if not verified:
         retry = state.get("verify_retry_count", 0) + 1
         new_state["verify_retry_count"] = retry
-        new_state["relaxed"] = True   # 다음 search에서 조건 완화
-        print(f"[재시도 {retry}회차] relaxed=True 설정")
-
+        new_state["relaxed"]            = True
+        print(f"[verify] 재시도 {retry}회차 예약")
     return new_state
 
 
-# ── recommend ─────────────────────────────────────────────────────────────────
+# ── recommend_node ────────────────────────────────────────────────────────────
 
 @traceable(name="recommend")
 def recommend_node(state: AgentState) -> AgentState:
-    """필터링된 매물을 바탕으로 자연어 추천 텍스트를 생성합니다."""
-    llm      = _get_llm()
-    filtered = state.get("filtered_results", [])
-    condition = state.get("condition", {})
+    """실거래 데이터 + 생활권 조건을 반영한 추천 코멘트를 생성합니다."""
 
+    filtered  = state.get("filtered_results", [])
+    condition = state.get("condition", {})
+    lifestyle = state.get("lifestyle", {})
+
+    # 매물 없음 → 조건 완화 힌트 반환
     if not filtered:
         hints = []
-        if condition.get("max_deposit") or condition.get("max_monthly") or condition.get("max_price"):
-            hints.append("• 금액 상한을 조금 더 여유 있게 잡아보세요 (예: +20%)")
-        if condition.get("min_area"):
-            hints.append("• 최소 면적 기준을 낮춰보세요")
+        if any(condition.get(k) for k in ("max_deposit", "max_monthly", "max_price")):
+            hints.append("• 금액 상한을 조금 높여보세요")
         if condition.get("property_type"):
             hints.append(f"• '{condition['property_type']}' 외 다른 유형도 고려해보세요")
-        if condition.get("region"):
-            hints.append(f"• '{condition['region']}' 인근 지역도 함께 찾아드릴까요?")
-        if not hints:
-            hints.append("• 희망 지역·거래유형·금액 중 한 가지를 조정해 다시 알려주세요")
+        hints.append("• 인근 다른 구도 함께 찾아보세요")
 
         return {
             **state,
-            "recommendations": (
-                "🔎 조건에 맞는 매물을 찾지 못했습니다. 아래 방법을 시도해보세요!\n"
-                + "\n".join(hints)
-            ),
+            "recommendations": "🔎 조건에 맞는 실거래 데이터가 없어요.\n" + "\n".join(hints),
         }
 
+    # 동네 정보 웹 검색 (Tavily 설정 시)
+    region     = condition.get("region", "")
+    ls_keyword = lifestyle.get("raw_keywords", "")
+    web_info   = search_neighborhood(region, ls_keyword)
+    web_ctx    = format_web_context(web_info)
+
+    # 생활권 조건 텍스트
+    ls_parts = []
+    if lifestyle.get("activities"): ls_parts.append(f"액티비티: {', '.join(lifestyle['activities'])}")
+    if lifestyle.get("atmosphere"): ls_parts.append(f"분위기: {lifestyle['atmosphere']}")
+    if lifestyle.get("amenities"):  ls_parts.append(f"선호 시설: {', '.join(lifestyle['amenities'])}")
+    ls_text = "\n".join(ls_parts) or "없음"
+
     system_prompt = (
-        "당신은 친절한 부동산 추천 전문가입니다. "
-        "아래 매물 목록을 바탕으로 각 매물의 장단점과 추천 이유를 포함하고, "
-        "1순위 추천 매물을 명시해주세요. 이모지로 가독성 있게 작성하세요."
+        "당신은 친절한 부동산 추천 전문가입니다.\n"
+        "실거래 데이터 기반으로 각 매물의 특징과 추천 이유를 설명하세요.\n"
+        "생활권 조건이 있으면 동네 환경과 연결해서 구체적으로 설명해주세요.\n"
+        "이모지를 활용해 가독성 있게 작성하고, 1순위 추천 매물을 명시해주세요.\n"
+        "⚠️ 이 데이터는 국토교통부 실거래가 기록이므로 현재 매물이 아닐 수 있음을 안내해주세요."
     )
+
     user_message = (
-        f"사용자 조건: {json.dumps(condition, ensure_ascii=False)}\n\n"
-        f"추천 매물:\n{json.dumps(filtered, ensure_ascii=False, indent=2)}\n\n"
-        "위 매물들에 대해 추천 분석을 작성해주세요."
+        f"매물 조건: {json.dumps(condition, ensure_ascii=False)}\n\n"
+        f"생활권 조건:\n{ls_text}\n\n"
+        f"실거래 데이터:\n{json.dumps(filtered, ensure_ascii=False, indent=2)}"
+        + (f"\n\n{web_ctx}" if web_ctx else "")
+        + "\n\n위 데이터를 바탕으로 추천 분석을 작성해주세요."
     )
 
     try:
-        response = llm.invoke([
+        response = _llm().invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_message),
         ])

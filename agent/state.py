@@ -1,37 +1,45 @@
-from typing import TypedDict, Optional, List, Any
+from typing import Any, List, Optional, TypedDict
 
 
 class UserCondition(TypedDict, total=False):
-    region: Optional[str]
-    deal_type: Optional[str]
-    max_deposit: Optional[int]
-    max_monthly: Optional[int]
-    max_price: Optional[int]
-    min_area: Optional[float]
-    property_type: Optional[str]
-    min_households: Optional[int]
-    parking_required: Optional[bool]
-    building_structure: Optional[str]
-    max_subway_minutes: Optional[int]
-    min_rooms: Optional[int]
-    min_bathrooms: Optional[int]
-    preferred_floor: Optional[str]
-    direction: Optional[str]
-    max_building_age: Optional[int]
+    """매물 스펙 조건"""
+    region:             Optional[str]    # 지역 (예: "마포구")
+    deal_type:          Optional[str]    # "월세" | "전세" | "매매"
+    max_deposit:        Optional[int]    # 최대 보증금 (만원)
+    max_monthly:        Optional[int]    # 최대 월세 (만원)
+    max_price:          Optional[int]    # 최대 매매가 (만원)
+    min_area:           Optional[float]  # 최소 면적 (m²)
+    property_type:      Optional[str]    # "원룸" | "투룸" | "쓰리룸" | "아파트" | "오피스텔"
+    min_households:     Optional[int]    # 최소 세대수
+    parking_required:   Optional[bool]   # 주차 필수
+    building_structure: Optional[str]    # "계단식" | "복도식"
+    max_subway_minutes: Optional[int]    # 역까지 최대 도보 (분)
+    min_rooms:          Optional[int]    # 최소 방 개수
+    min_bathrooms:      Optional[int]    # 최소 욕실 개수
+    preferred_floor:    Optional[str]    # "저층" | "중층" | "고층"
+    direction:          Optional[str]    # "남향" | "동향" | "서향" | "북향" 등
+    max_building_age:   Optional[int]    # 최대 건물 연식 (년)
+
+
+class UserLifestyle(TypedDict, total=False):
+    """생활권·분위기 조건"""
+    activities:   List[str]     # ["런닝", "자전거", "등산", "수영", "헬스"]
+    atmosphere:   Optional[str] # "조용한" | "활발한" | "자연친화적" | "카페거리" | "번화가"
+    amenities:    List[str]     # ["공원", "한강", "카페", "헬스장", "마트", "병원"]
+    raw_keywords: Optional[str] # 원문 (예: "런닝하기 좋은 조용한 동네")
 
 
 class AgentState(TypedDict):
-    user_input: str
-    condition: UserCondition
-    is_valid: bool
-    error_message: Optional[str]
-    # clarify 노드가 생성한 질문. 값이 있으면 API가 프론트에 반환하고 그래프를 종료함.
-    clarify_question: Optional[str]
-    search_results: List[dict]
-    filtered_results: List[dict]
-    recommendations: str
-    retry_count: int
-    verify_retry_count: int
-    # verify 재시도 시 True로 설정 → LLM에 조건 완화 신호를 줌
-    relaxed: bool
-    messages: List[Any]
+    user_input:         str
+    condition:          UserCondition
+    lifestyle:          UserLifestyle
+    is_valid:           bool
+    error_message:      Optional[str]
+    clarify_question:   Optional[str]   # 값이 있으면 API가 프론트에 반환 후 그래프 종료
+    search_results:     List[dict]      # 실거래 API 수집 매물
+    filtered_results:   List[dict]      # 필터링·검증 통과 매물
+    recommendations:    str             # AI 추천 코멘트
+    retry_count:        int             # clarify 재시도 횟수
+    verify_retry_count: int             # verify 재시도 횟수
+    relaxed:            bool            # True면 소프트 조건 완화
+    messages:           List[Any]

@@ -1,3 +1,4 @@
+import uuid
 import streamlit as st
 import requests
 
@@ -362,16 +363,21 @@ def render_cards(results: list) -> str:
     return html
 
 
-def call_api(user_input: str, clarify_answer: str = None) -> dict:
-    payload = {"user_input": user_input}
-    if clarify_answer:
-        payload["clarify_answer"] = clarify_answer
+def call_api(user_input: str) -> dict:
+    # 세션 ID를 함께 전송
+    payload = {
+        "user_input": user_input,
+        "thread_id": st.session_state.thread_id
+    }
     resp = requests.post(f"{API_URL}/recommend", json=payload, timeout=120)
     resp.raise_for_status()
     return resp.json()
 
 
 # ── 세션 상태 ────────────────────────────────────────────────────────────────
+
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4()) # 접속자별 고유 ID 부여
 
 for k, v in {"pending_clarify": False, "clarify_question": "",
              "original_input": "", "result": None}.items():
@@ -385,7 +391,6 @@ EXAMPLES = [
     "마포구 월세 3000/80 투룸",
     "강남구 전세 2억 역세권 주차가능",
     "송파구 매매 아파트 3억 방 2개",
-    "서대문구 원룸 월세 40 신축",
 ]
 chips = " ".join(f'<span class="chip">{e}</span>' for e in EXAMPLES)
 

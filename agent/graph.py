@@ -1,66 +1,44 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
+from langgraph.checkpoint.memory import MemorySaver # 추가됨
 
-from agent.state import AgentState
 from agent.nodes import (
-    parse_condition_node,
-    validate_node,
     clarify_node,
-    search_and_filter_node,
-    verify_node,
+    parse_condition_node,
     recommend_node,
+    search_and_filter_node,
+    validate_node,
+    verify_node,
 )
+from agent.state import AgentState
 
+def _route_validate(state: AgentState) -> str:
+    if state.get("is_valid"):            return "search"
+    if state.get("retry_count", 0) >= 2: return "search"   # 2회 초과 → 강제 진행
+    return "clarify"
 
-def route_after_validate(state: AgentState) -> str:
-    if state["is_valid"]:
-        return "search"
-    elif state.get("retry_count", 0) >= 2:
-        # 2회 초과 시 조건이 불충분하더라도 강제로 검색 진행
-        return "search"
-    else:
-        return "clarify"
-
-
-def route_after_verify(state: AgentState) -> str:
-    if state.get("filtered_results"):
-        return "recommend"
-    if state.get("verify_retry_count", 0) >= 2:
-        # 재시도 2회 초과 → 빈 결과로 recommend (조건 완화 안내 메시지 출력)
-        return "recommend"
+def _route_verify(state: AgentState) -> str:
+    if state.get("filtered_results"):              return "recommend"
+    if state.get("verify_retry_count", 0) >= 2:    return "recommend"  # 한계 → 빈 결과로 추천
     return "search"
 
-
 def build_graph():
-    graph = StateGraph(AgentState)
+    g = StateGraph(AgentState)
 
-    graph.add_node("parse",   parse_condition_node)
-    graph.add_node("validate", validate_node)
-    graph.add_node("clarify", clarify_node)
-    graph.add_node("search",  search_and_filter_node)
-    graph.add_node("verify",  verify_node)
-    graph.add_node("recommend", recommend_node)
+    g.add_node("parse",    parse_condition_node)
+    g.add_node("validate", validate_node)
+    g.add_node("clarify",  clarify_node)
+    g.add_node("search",   search_and_filter_node)
+    g.add_node("verify",   verify_node)
+    g.add_node("recommend",recommend_node)
 
-    graph.set_entry_point("parse")
-    graph.add_edge("parse", "validate")
+    g.set_entry_point("parse")
+    g.add_edge("parse",    "validate")
+    g.add_conditional_edges("validate", _route_validate, {"search": "search", "clarify": "clarify"})
+    g.add_edge("clarify",  END)         
+    g.add_edge("search",   "verify")
+    g.add_conditional_edges("verify", _route_verify, {"search": "search", "recommend": "recommend"})
+    g.add_edge("recommend", END)
 
-    graph.add_conditional_edges(
-        "validate",
-        route_after_validate,
-        {"search": "search", "clarify": "clarify"},
-    )
-
-    # clarify는 질문을 state에 저장한 뒤 바로 종료.
-    # 다음 요청에서 combined_input으로 재진입해 parse → validate → search 경로를 탄다.
-    graph.add_edge("clarify", END)
-
-    graph.add_edge("search", "verify")
-
-    graph.add_conditional_edges(
-        "verify",
-        route_after_verify,
-        {"search": "search", "recommend": "recommend"},
-    )
-
-    graph.add_edge("recommend", END)
-
-    return graph.compile()
+    # 상태 관리를 위한 MemorySaver 적용
+    memory = MemorySaver()
+    return g.compile(checkpointer=memory)
