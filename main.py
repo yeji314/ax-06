@@ -78,7 +78,15 @@ def _check_env() -> None:
         )
     if not os.getenv("TAVILY_API_KEY"):
         console.print(
-            "[dim]ℹ TAVILY_API_KEY 미설정 — 동네 정보 웹 검색은 건너뜁니다.[/dim]\n"
+            "[dim]ℹ TAVILY_API_KEY 미설정 — 동네 정보 웹 검색은 건너뜁니다.[/dim]"
+        )
+    if not os.getenv("KAKAO_REST_API_KEY"):
+        console.print(
+            "[dim]ℹ KAKAO_REST_API_KEY 미설정 — 통근 시간은 사전 정의 매트릭스로 추정합니다.[/dim]\n"
+        )
+    else:
+        console.print(
+            "[dim]ℹ Kakao Local API 사용 가능 — 통근 시간은 좌표 기반으로 정확하게 추정됩니다.[/dim]\n"
         )
 
 

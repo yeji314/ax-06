@@ -218,10 +218,25 @@ for hub, alias in [("시청역", "시청"), ("강남역", "강남"), ("여의도
 
 
 def estimate_commute_minutes(from_hub: str, to_district: str) -> Optional[int]:
-    """거점(역명/구) → 매물 구까지 추정 대중교통 시간(분). 데이터 없으면 None."""
+    """
+    거점(역명/구) → 매물까지 추정 통근 시간(분).
+    1차: KAKAO_REST_API_KEY가 있으면 Kakao Local geocoding + Haversine 기반 추정 (정확도 ↑)
+    2차: 정적 매트릭스 (폴백)
+    """
     if not from_hub or not to_district:
         return None
-    # 거점 매칭 (예: "회사 시청역" → key "시청역")
+
+    # Kakao API 사용 가능하면 좌표 기반 정확 추정
+    try:
+        from tools.kakao_api import estimate_transit_minutes, is_available
+        if is_available():
+            kakao_est = estimate_transit_minutes(from_hub, to_district)
+            if kakao_est is not None:
+                return kakao_est
+    except Exception:
+        pass  # Kakao 모듈 import 실패 시 폴백
+
+    # 폴백: 거점-구 정적 매트릭스 lookup
     table = None
     for hub_key, mapping in COMMUTE_TIME_FROM_HUB.items():
         if hub_key in from_hub:
@@ -229,7 +244,6 @@ def estimate_commute_minutes(from_hub: str, to_district: str) -> Optional[int]:
             break
     if not table:
         return None
-    # 매물 구 매칭
     for gu, mins in table.items():
         if gu in to_district:
             return mins
