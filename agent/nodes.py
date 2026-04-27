@@ -242,6 +242,9 @@ def parse_condition_node(state: AgentState) -> AgentState:
         "condition":        condition,
         "lifestyle":        lifestyle,
         "clarify_question": None,
+        # 새 입력마다 verify 재시도 상태 리셋 (이전 검색의 잔재 차단)
+        "verify_retry_count": 0,
+        "relaxed":            False,
         "messages":         list(state.get("messages", [])) + [
             HumanMessage(content=user_input),
             AIMessage(content=str(condition)),

@@ -20,6 +20,7 @@ warnings.filterwarnings("ignore", message=".*PydanticSerializationUnexpectedValu
 import os
 import sys
 import uuid
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -185,30 +186,29 @@ def _read_input(prompt: str = "🏡 ") -> str:
         return "q"
 
 
-def run_session(graph) -> None:
-    """한 번의 검색 세션 — clarify가 필요하면 재질문 루프를 돈다."""
+EXIT_TOKENS  = {"q", "quit", "exit", "종료"}
+RESET_TOKENS = {"새로", "처음부터", "리셋", "reset", "new", "초기화"}
+
+
+def _new_thread_config() -> tuple[str, dict]:
     thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
+    return thread_id, {"configurable": {"thread_id": thread_id}}
 
-    user_input = _read_input("🏡 어떤 매물을 찾으시나요?")
-    if user_input.lower() in ("q", "quit", "exit", "종료"):
-        return
 
-    if not user_input:
-        console.print("[red]입력값이 없습니다.[/red]")
-        return
-
+def _invoke_with_clarify(graph, config: dict, user_input: str) -> Optional[dict]:
+    """
+    그래프를 invoke하되 clarify_question이 나오면 사용자 답변을 받아 다시 invoke.
+    종료/취소 시 None 반환.
+    """
     while True:
         console.print("\n[dim]🔄 Agent 실행 중...[/dim]")
-
         try:
             state = graph.invoke({"user_input": user_input}, config=config)
         except Exception as e:
             console.print(f"[red]❌ 실행 오류: {e}[/red]")
             console.print_exception()
-            return
+            return None
 
-        # clarify 단계: 추가 정보 요청 → 재질문 루프
         if state.get("clarify_question"):
             console.print(Rule("[bold yellow]🤔 추가 정보 필요[/bold yellow]", style="yellow"))
             console.print(Panel(
@@ -217,37 +217,61 @@ def run_session(graph) -> None:
                 padding=(1, 2),
             ))
             answer = _read_input("👉")
-            if answer.lower() in ("q", "quit", "exit", "종료"):
-                return
-            if not answer:
-                console.print("[red]답변이 없어 종료합니다.[/red]")
-                return
+            low = answer.lower()
+            if not answer or low in EXIT_TOKENS:
+                return None
             user_input = answer
             continue
 
-        _print_results(state)
-        return
+        return state
 
 
 def main() -> None:
+    """
+    멀티턴 대화형 진입점.
+    - 첫 입력 후 매물 추천이 나오면, 자유 입력으로 후속 질의를 이어간다.
+    - 'q' 종료 / '새로' 입력 시 세션 초기화 (thread_id 재발급).
+    """
     _print_header()
     _check_env()
 
     graph = build_graph()
+    thread_id, config = _new_thread_config()
+
+    user_input = _read_input("🏡 어떤 매물을 찾으시나요?")
+    if not user_input or user_input.lower() in EXIT_TOKENS:
+        console.print("[yellow]👋 이용해 주셔서 감사합니다![/yellow]")
+        return
 
     while True:
-        run_session(graph)
-        console.print(
-            "\n[bold white]🔄 다른 매물을 더 찾으시겠어요? (y/n):[/bold white] ", end=""
-        )
-        try:
-            again = input().strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            again = "n"
-        if again != "y":
+        result = _invoke_with_clarify(graph, config, user_input)
+        if result is None:
             console.print("[yellow]👋 이용해 주셔서 감사합니다![/yellow]")
-            break
-        console.print()
+            return
+
+        _print_results(result)
+
+        console.print(
+            "\n[dim]💡 조건을 바꾸거나 추가 질문을 자유롭게 입력해 주세요. "
+            "(`새로`: 세션 초기화 / `q`: 종료)[/dim]"
+        )
+        next_input = _read_input("👉")
+        low = next_input.lower()
+
+        if not next_input or low in EXIT_TOKENS:
+            console.print("[yellow]👋 이용해 주셔서 감사합니다![/yellow]")
+            return
+        if low in RESET_TOKENS:
+            thread_id, config = _new_thread_config()
+            console.print("[dim]🆕 세션 초기화 완료. 새 검색을 시작합니다.[/dim]\n")
+            user_input = _read_input("🏡 어떤 매물을 찾으시나요?")
+            if not user_input or user_input.lower() in EXIT_TOKENS:
+                console.print("[yellow]👋 이용해 주셔서 감사합니다![/yellow]")
+                return
+            continue
+
+        # 같은 thread_id 유지 → MemorySaver가 이전 condition·lifestyle 머지
+        user_input = next_input
 
 
 if __name__ == "__main__":
