@@ -39,6 +39,7 @@ class AgentState(TypedDict):
     clarify_question:   Optional[str]   # 값이 있으면 API가 프론트에 반환 후 그래프 종료
     search_results:     List[dict]      # 실거래 API 수집 매물
     filtered_results:   List[dict]      # 필터링·검증 통과 매물
+    filter_stats:       dict            # 필터 단계별 탈락 사유 집계
     recommendations:    str             # AI 추천 코멘트
     retry_count:        int             # clarify 재시도 횟수
     verify_retry_count: int             # verify 재시도 횟수

@@ -14,9 +14,16 @@ def filter_and_score_raw(
     properties: list,
     condition: dict,
     lifestyle: dict = None,
+    stats: dict = None,
 ) -> list:
     """
     매물 필터링 + 점수 계산.
+
+    Args:
+        properties: 매물 목록
+        condition:  사용자 조건
+        lifestyle:  생활권 조건
+        stats:      탈락 사유별 카운터 (out-parameter, dict가 주어지면 채워줌)
 
     점수 구성:
       가격 조건 충족    +30
@@ -35,6 +42,14 @@ def filter_and_score_raw(
     current_year = datetime.now().year
     passed       = []
 
+    # 탈락 사유 카운터 (입력으로 받은 dict에 누적)
+    if stats is not None:
+        stats.setdefault("rejected_by", {})
+        stats.setdefault("data_gaps", {"subway_minutes_missing": 0, "total_floors_missing": 0})
+    def _reject(reason: str) -> None:
+        if stats is not None:
+            stats["rejected_by"][reason] = stats["rejected_by"].get(reason, 0) + 1
+
     for p in properties:
         prop      = dict(p)
         deal_type = prop.get("deal_type", "")
@@ -46,7 +61,7 @@ def filter_and_score_raw(
         # 거래유형 (deal_type) 필터 — 전세 요청인데 월세 매물 통과하던 버그 수정
         cond_deal = condition.get("deal_type")
         if cond_deal and deal_type != cond_deal:
-            continue
+            _reject("거래유형 불일치"); continue
 
         # 매물 유형 (property_type) 필터 — MOLIT 유형 매핑 포함
         cond_prop = condition.get("property_type")
@@ -56,45 +71,72 @@ def filter_and_score_raw(
                 "투룸":    ["빌라", "오피스텔"],
                 "쓰리룸":  ["빌라"],
                 "오피스텔": ["오피스텔"],
-                "아파트":  ["아파트"],   # 도시형생활주택·주거형 오피스텔은 사전에 '오피스텔'로 재분류됨
+                "아파트":  ["아파트"],
                 "빌라":    ["빌라"],
             }
             if prop.get("type", "") not in TYPE_MAP.get(cond_prop, [cond_prop]):
-                continue
+                _reject("방종류 불일치"); continue
 
         # 가격
         if deal_type == "월세":
-            if condition.get("max_deposit") and deposit > condition["max_deposit"]: continue
-            if condition.get("max_monthly") and monthly > condition["max_monthly"]: continue
+            if condition.get("max_deposit") and deposit > condition["max_deposit"]:
+                _reject("가격(보증금) 초과"); continue
+            if condition.get("max_monthly") and monthly > condition["max_monthly"]:
+                _reject("가격(월세) 초과"); continue
         elif deal_type == "전세":
             max_d = condition.get("max_deposit") or condition.get("max_price")
-            if max_d and deposit > max_d: continue
+            if max_d and deposit > max_d:
+                _reject("가격(전세가) 초과"); continue
         elif deal_type == "매매":
             max_p = condition.get("max_price") or condition.get("max_deposit")
-            if max_p and deposit > max_p: continue
+            if max_p and deposit > max_p:
+                _reject("가격(매매가) 초과"); continue
 
-        if condition.get("min_area")           and prop.get("area_m2", 0)        < condition["min_area"]:           continue
-        if condition.get("min_households")     and prop.get("households", 0)     < condition["min_households"]:     continue
-        if condition.get("parking_required")   and not prop.get("parking"):                                         continue
-        if condition.get("building_structure") and prop.get("building_structure") != condition["building_structure"]: continue
-        if condition.get("max_subway_minutes") and prop.get("subway_minutes", 99) > condition["max_subway_minutes"]: continue
-        if condition.get("min_rooms")          and prop.get("rooms", 0)           < condition["min_rooms"]:          continue
-        if condition.get("min_bathrooms")      and prop.get("bathrooms", 0)       < condition["min_bathrooms"]:      continue
-        if condition.get("direction")          and condition["direction"] not in (prop.get("direction") or ""):      continue
+        if condition.get("min_area") and prop.get("area_m2", 0) < condition["min_area"]:
+            _reject("최소 면적 미달"); continue
+        if condition.get("min_households") and prop.get("households", 0) < condition["min_households"]:
+            _reject("최소 세대수 미달"); continue
+        if condition.get("parking_required") and not prop.get("parking"):
+            _reject("주차 불가"); continue
+        if condition.get("building_structure") and prop.get("building_structure") != condition["building_structure"]:
+            _reject("건물 구조 불일치"); continue
+
+        # 역까지 도보 — MOLIT 데이터에 정보 없음(99 sentinel)을 별도 집계
+        if condition.get("max_subway_minutes"):
+            sm = prop.get("subway_minutes", 99)
+            if sm == 99:
+                if stats is not None:
+                    stats["data_gaps"]["subway_minutes_missing"] += 1
+                _reject("역세권 정보 없음(데이터 한계)"); continue
+            if sm > condition["max_subway_minutes"]:
+                _reject("역까지 도보 시간 초과"); continue
+
+        if condition.get("min_rooms") and prop.get("rooms", 0) < condition["min_rooms"]:
+            _reject("최소 방 수 미달"); continue
+        if condition.get("min_bathrooms") and prop.get("bathrooms", 0) < condition["min_bathrooms"]:
+            _reject("최소 욕실 수 미달"); continue
+        if condition.get("direction") and condition["direction"] not in (prop.get("direction") or ""):
+            _reject("선호 방향 불일치"); continue
 
         if condition.get("preferred_floor"):
             band = _floor_band(prop.get("floor", 0), prop.get("total_floors", 0))
-            if band and band != condition["preferred_floor"]: continue
+            if band and band != condition["preferred_floor"]:
+                _reject("선호 층대 불일치"); continue
 
         # 탑층 강제 — total_floors가 없으면(=실거래 데이터 한계) 정확 매칭 불가 → 모두 탈락
         if condition.get("top_floor_only"):
             total = prop.get("total_floors", 0)
             floor = prop.get("floor", 0)
-            if not total or floor != total:
-                continue
+            if not total:
+                if stats is not None:
+                    stats["data_gaps"]["total_floors_missing"] += 1
+                _reject("탑층 확정 불가(총층수 데이터 없음)"); continue
+            if floor != total:
+                _reject("탑층 아님"); continue
 
         if condition.get("max_building_age") and prop.get("built_year"):
-            if (current_year - prop["built_year"]) > condition["max_building_age"]: continue
+            if (current_year - prop["built_year"]) > condition["max_building_age"]:
+                _reject("연식 초과"); continue
 
         # ── 점수 계산 ─────────────────────────────────────────────────────────
         score = 30  # 가격 통과 기본점

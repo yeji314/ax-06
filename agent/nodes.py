@@ -425,14 +425,22 @@ def search_and_filter_node(state: AgentState) -> AgentState:
             filter_cond.pop(key, None)
         print("[search] 소프트 조건 완화 적용")
 
-    filtered_results = filter_and_score_raw(search_results, filter_cond, lifestyle)
+    filter_stats: dict = {}
+    filtered_results = filter_and_score_raw(search_results, filter_cond, lifestyle, stats=filter_stats)
     print(f"[search] 필터 통과 {len(filtered_results)}건")
+
+    rejected = filter_stats.get("rejected_by", {})
+    if rejected and not filtered_results:
+        top3 = sorted(rejected.items(), key=lambda x: -x[1])[:3]
+        summary = ", ".join(f"{r} {n}건" for r, n in top3)
+        print(f"[search] 주요 탈락 사유: {summary}")
 
     return {
         **state,
         "condition":        condition,  # 확장된 region이 verify에서도 통과되도록 반영
         "search_results":   search_results,
         "filtered_results": filtered_results,
+        "filter_stats":     filter_stats,
         "error_message":    None,
     }
 
@@ -507,47 +515,69 @@ def recommend_node(state: AgentState) -> AgentState:
     condition = state.get("condition", {})
     lifestyle = state.get("lifestyle", {})
 
-    # 매물 없음 → 어떤 조건이 막았는지 솔직하게 안내
+    # 매물 없음 → 필터 통계로 구체적 원인 진단
     if not filtered:
-        # 데이터 한계로 매칭 불가능한 강성 조건
-        unsatisfiable: list[str] = []
-        if condition.get("top_floor_only"):
-            unsatisfiable.append(
-                "탑층(꼭대기 층) — 실거래가 데이터에 총층수 정보가 포함되지 않아 "
-                "탑층 여부를 확정할 수 없습니다."
-            )
-
-        # 완화 가능한 일반 조건
-        hints: list[str] = []
-        if any(condition.get(k) for k in ("max_deposit", "max_monthly", "max_price")):
-            hints.append("• 금액 상한을 조금 높여보세요")
-        if condition.get("property_type"):
-            hints.append(f"• '{condition['property_type']}' 외 다른 유형도 고려해보세요")
-        if condition.get("min_area"):
-            hints.append(f"• 최소 면적({condition['min_area']}m²) 기준을 낮춰보세요")
-        if condition.get("min_households"):
-            hints.append(f"• 최소 세대수({condition['min_households']}세대) 기준을 낮춰보세요")
-        if condition.get("max_subway_minutes"):
-            hints.append(f"• 역까지 도보 시간({condition['max_subway_minutes']}분) 기준을 늘려보세요")
-        if condition.get("region"):
-            hints.append(f"• '{condition['region']}' 외 인근 지역도 함께 찾아보세요")
+        filter_stats = state.get("filter_stats") or {}
+        rejected     = filter_stats.get("rejected_by") or {}
+        data_gaps    = filter_stats.get("data_gaps") or {}
+        total_rejected = sum(rejected.values())
 
         msg_lines = ["❌ 조건에 정확히 맞는 매물을 찾지 못했어요."]
-        if unsatisfiable:
+
+        if rejected:
+            top = sorted(rejected.items(), key=lambda x: -x[1])
+            top_reason, top_count = top[0]
+            pct = (top_count * 100) // total_rejected if total_rejected else 0
+
             msg_lines.append("")
-            msg_lines.append("⚠️ 다음 조건은 현재 데이터로 매칭이 불가합니다:")
-            for u in unsatisfiable:
-                msg_lines.append(f"  • {u}")
-            if condition.get("top_floor_only"):
-                msg_lines.append("")
-                msg_lines.append(
-                    "💡 대안: '고층' 조건(상위 1/3 층)으로 다시 검색해 드릴까요? "
-                    "예) '탑층 빼고 고층으로 다시'"
-                )
-        if hints:
+            msg_lines.append(f"🔍 **0건이 된 핵심 이유**: {top_reason} ({top_count}건, 약 {pct}%)")
+
+            # 상위 3개 사유 막대그래프 형식
             msg_lines.append("")
-            msg_lines.append("🔧 다른 조건도 함께 검토해보세요:")
-            msg_lines.extend(hints)
+            msg_lines.append("📊 단계별 탈락 분포 (전체 {} 건 중):".format(total_rejected))
+            for reason, n in top[:5]:
+                bar = "█" * max(1, (n * 30) // top_count)
+                msg_lines.append(f"  {reason:24} {bar} {n}건")
+
+        # 데이터 자체 한계 (사용자 잘못 아님)
+        gap_msgs = []
+        if data_gaps.get("subway_minutes_missing", 0) > 0:
+            gap_msgs.append(
+                "• 실거래가 API에 **지하철역 거리 정보가 없습니다**. "
+                "'역까지 N분' 조건을 빼거나 다른 조건으로 시도해 주세요."
+            )
+        if data_gaps.get("total_floors_missing", 0) > 0 or condition.get("top_floor_only"):
+            gap_msgs.append(
+                "• 실거래가 API에 **총 층수 정보가 없습니다**. "
+                "'탑층' 조건은 매칭이 불가하니 '고층' 조건으로 바꿔보세요."
+            )
+        if gap_msgs:
+            msg_lines.append("")
+            msg_lines.append("⚠️ 데이터 한계로 매칭이 어려운 조건:")
+            msg_lines.extend(gap_msgs)
+
+        # 완화 제안 — top reason 기반 우선 제안
+        suggestions: list[str] = []
+        if "가격" in str(rejected):
+            top_price_reasons = [r for r in rejected if "가격" in r]
+            if top_price_reasons:
+                if any(condition.get(k) for k in ("max_price", "max_deposit", "max_monthly")):
+                    suggestions.append("• 가격 상한을 10~20% 정도 높여보세요")
+        if "면적" in str(rejected) and condition.get("min_area"):
+            suggestions.append(f"• 최소 면적({condition['min_area']}m²) 기준을 낮춰보세요")
+        if "세대수" in str(rejected) and condition.get("min_households"):
+            suggestions.append(f"• 최소 세대수({condition['min_households']}세대) 기준을 낮춰보세요")
+        if "역세권" in str(rejected) or "역까지" in str(rejected):
+            suggestions.append("• '역까지 N분' 조건 자체를 빼는 것도 고려해보세요 (실거래 데이터엔 정보 없음)")
+        if "방종류" in str(rejected) and condition.get("property_type"):
+            suggestions.append(f"• '{condition['property_type']}' 외 다른 유형도 고려해보세요")
+        if condition.get("region"):
+            suggestions.append(f"• '{condition['region']}' 외 인근 지역도 추가해보세요")
+
+        if suggestions:
+            msg_lines.append("")
+            msg_lines.append("💡 시도해볼만한 조정:")
+            msg_lines.extend(suggestions)
 
         return {**state, "recommendations": "\n".join(msg_lines)}
 
