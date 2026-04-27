@@ -86,6 +86,40 @@ def is_broad_region(region_text: str) -> bool:
     return any(tok in region_text for tok in BROAD_REGION_TOKENS)
 
 
+# 지하철 노선 → 대표 구 추천 (region이 노선명일 때 사용)
+SUBWAY_LINE_TO_GU: dict[str, list[str]] = {
+    "1호선":   ["종로구", "중구", "용산구", "동대문구", "구로구"],
+    "2호선":   ["마포구", "성동구", "강남구", "송파구", "영등포구"],
+    "3호선":   ["은평구", "종로구", "강남구", "서초구"],
+    "4호선":   ["중구", "용산구", "동작구", "노원구"],
+    "5호선":   ["강서구", "마포구", "광진구", "송파구", "강동구"],
+    "6호선":   ["은평구", "마포구", "용산구", "성북구", "동대문구"],
+    "7호선":   ["강남구", "송파구", "광진구", "노원구", "도봉구"],
+    "8호선":   ["송파구", "강동구"],
+    "9호선":   ["강서구", "영등포구", "동작구", "서초구", "강남구"],
+    "분당선":   ["강남구", "성남시"],
+    "신분당선": ["강남구", "서초구", "성남시"],
+    "수인분당선": ["강남구", "성남시", "수원시"],
+    "경의중앙선": ["용산구", "마포구"],
+    "공항철도":  ["중구", "용산구", "마포구", "강서구"],
+    "우이신설선": ["성북구", "강북구"],
+    "신림선":   ["영등포구", "동작구", "관악구"],
+}
+
+
+def infer_gus_from_subway_line(text: str, max_count: int = 3) -> list[str]:
+    """텍스트에 'N호선' 패턴이 있으면 그 노선의 대표 구를 반환."""
+    if not text:
+        return []
+    seen: list[str] = []
+    for line, gus in SUBWAY_LINE_TO_GU.items():
+        if line in text:
+            for g in gus:
+                if g not in seen:
+                    seen.append(g)
+    return seen[:max_count]
+
+
 # 라이프스타일/키워드 → 대표 구 추천 (광역 region일 때 사용)
 LIFESTYLE_KEYWORD_TO_GU: dict[str, list[str]] = {
     "학군":      ["강남구", "서초구", "양천구", "노원구", "송파구"],

@@ -112,8 +112,20 @@ _VALID_PROPERTY_TYPES = {"원룸", "투룸", "쓰리룸", "아파트", "오피�
 _VALID_DEAL_TYPES     = {"월세", "전세", "매매"}
 
 
+def _sanitize_input(text: str) -> str:
+    """
+    사용자 입력의 일반적인 오타·IME 잔재 정리.
+    - 'D2호선' → '2호선' : 한글/영문 모드 혼선으로 영문 한 글자가 호선 앞에 붙는 경우
+    - 'D2 호선' → '2호선' : 공백 포함
+    """
+    cleaned = re.sub(r"(?<![A-Za-z])[A-Za-z]\s*(?=\d+\s*호선)", "", text)
+    if cleaned != text:
+        print(f"[parse 정제] '{text}' → '{cleaned}'")
+    return cleaned
+
+
 def parse_condition_node(state: AgentState) -> AgentState:
-    user_input = state["user_input"]
+    user_input = _sanitize_input(state["user_input"])
     parsed     = {}
 
     try:
@@ -178,6 +190,7 @@ def parse_condition_node(state: AgentState) -> AgentState:
 
     return {
         **state,
+        "user_input":       user_input,  # 정제된 입력으로 교체 (clarify가 그대로 인용 방지)
         "condition":        condition,
         "lifestyle":        lifestyle,
         "clarify_question": None,
@@ -263,17 +276,25 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     """
     from tools.molit_api import (
         NEIGHBOR_GU, get_base_gu, infer_gus_from_lifestyle,
-        is_broad_region, search_real_properties_expanded,
+        infer_gus_from_subway_line, is_broad_region,
+        search_real_properties_expanded,
     )
 
     condition = dict(state.get("condition", {}) or {})
     lifestyle = state.get("lifestyle", {}) or {}
     relaxed   = state.get("relaxed", False)
     verify_retry = state.get("verify_retry_count", 0)
+    user_input = state.get("user_input", "") or ""
 
-    # 광역 region("서울"·"경기" 등)이면 라이프스타일로 대표 구 추천 → 다중 검색
-    region = condition.get("region", "")
-    if is_broad_region(region):
+    # 1) region 자체에서 지하철 노선 감지 (예: "2호선 근처")
+    region = condition.get("region", "") or ""
+    line_gus = infer_gus_from_subway_line(region) or infer_gus_from_subway_line(user_input)
+
+    if line_gus and (is_broad_region(region) or get_base_gu(region) is None):
+        condition["region"] = " ".join(line_gus)
+        print(f"[search] 지하철 노선 인식 → 대표 구 {line_gus} 로 검색")
+    elif is_broad_region(region):
+        # 2) 광역 region("서울"·"경기" 등)이면 라이프스타일로 대표 구 추천
         candidates = infer_gus_from_lifestyle(lifestyle, max_count=3)
         if candidates:
             condition["region"] = " ".join(candidates)
