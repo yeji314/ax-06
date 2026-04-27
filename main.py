@@ -11,6 +11,12 @@ LangGraph 기반 멀티턴 대화형 부동산 추천 Agent.
   - 동시 실행: ./run.sh
 """
 
+# urllib3 / Pydantic 경고 억제는 다른 import보다 먼저 등록되어야 적용됨
+import warnings
+warnings.filterwarnings("ignore", message=".*OpenSSL.*")
+warnings.filterwarnings("ignore", message=".*LibreSSL.*")
+warnings.filterwarnings("ignore", message=".*PydanticSerializationUnexpectedValue.*")
+
 import os
 import sys
 import uuid

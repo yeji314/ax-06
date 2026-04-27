@@ -1,3 +1,8 @@
+import warnings
+warnings.filterwarnings("ignore", message=".*OpenSSL.*")
+warnings.filterwarnings("ignore", message=".*LibreSSL.*")
+warnings.filterwarnings("ignore", message=".*PydanticSerializationUnexpectedValue.*")
+
 from typing import Any, Literal, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException

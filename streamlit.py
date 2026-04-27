@@ -1,3 +1,7 @@
+import warnings
+warnings.filterwarnings("ignore", message=".*OpenSSL.*")
+warnings.filterwarnings("ignore", message=".*LibreSSL.*")
+
 import uuid
 import streamlit as st
 import requests
