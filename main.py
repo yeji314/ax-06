@@ -22,6 +22,15 @@ import sys
 import uuid
 from typing import Optional
 
+# input()의 줄 편집(backspace/방향키/한글 IME) 활성화 — import만 해도 적용됨
+try:
+    import readline  # noqa: F401  (Unix/macOS)
+except ImportError:
+    try:
+        import pyreadline3  # noqa: F401  (Windows fallback)
+    except ImportError:
+        pass
+
 from dotenv import load_dotenv
 
 load_dotenv()
