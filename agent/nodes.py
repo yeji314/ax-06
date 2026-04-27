@@ -30,8 +30,9 @@ class UserConditionModel(BaseModel):
             "지역명. 다음 형태를 모두 인정합니다: "
             "구/시 이름(예: 마포구, 강남구), 동 이름(예: 공덕동), "
             "지하철역 이름(예: 서울역, 강남역, 홍대), "
-            "지하철 노선 이름(예: 2호선, 7호선, 분당선, 신분당선), "
-            "랜드마크(예: 한강, 잠실)"
+            "지하철 노선 이름(예: 2호선, 7호선, 분당선, 신분당선). "
+            "단, '한강'·'카페거리'·'학군' 같은 분위기/생활권 키워드는 region이 아니라 "
+            "lifestyle.amenities 또는 lifestyle.atmosphere에 넣으세요."
         ),
         default=None,
     )
@@ -411,7 +412,8 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     verify 재시도 시 인접 구로 검색 범위를 점진 확장합니다.
     """
     from tools.molit_api import (
-        NEIGHBOR_GU, get_base_gu, get_dongs_near_station,
+        LIFESTYLE_KEYWORD_TO_GU, NEIGHBOR_GU,
+        get_base_gu, get_dongs_near_station, get_lawd_cd,
         infer_gus_from_lifestyle, infer_gus_from_subway_line,
         is_broad_region, search_real_properties_expanded,
     )
@@ -434,6 +436,19 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     if line_gus and (is_broad_region(region) or get_base_gu(region) is None):
         condition["region"] = " ".join(line_gus)
         print(f"[search] 지하철 노선 인식 → 대표 구 {line_gus} 로 검색")
+    elif (
+        region and not near_dongs and not get_lawd_cd(region)
+        and any(kw == region.strip() for kw in LIFESTYLE_KEYWORD_TO_GU)
+    ):
+        # region 자체가 라이프스타일 키워드인 경우 (예: '한강', '카페거리')
+        # → 해당 키워드의 대표 구로 검색하고 lifestyle.amenities에도 추가
+        ls_gus = LIFESTYLE_KEYWORD_TO_GU[region.strip()][:3]
+        condition["region"] = " ".join(ls_gus)
+        amens = list(lifestyle.get("amenities") or [])
+        if region.strip() not in amens:
+            amens.append(region.strip())
+        lifestyle = {**lifestyle, "amenities": amens}
+        print(f"[search] '{region}'은 분위기 키워드 → 대표 구 {ls_gus} 로 변환")
     elif is_broad_region(region):
         # 2) 광역 region("서울"·"경기" 등)이면 라이프스타일로 대표 구 추천
         candidates = infer_gus_from_lifestyle(lifestyle, max_count=3)
@@ -520,6 +535,7 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     return {
         **state,
         "condition":        condition,  # 확장된 region이 verify에서도 통과되도록 반영
+        "lifestyle":        lifestyle,  # 라이프스타일 키워드 region 변환 시 amenities에 추가됨
         "search_results":   search_results,
         "filtered_results": filtered_results,
         "filter_stats":     filter_stats,
