@@ -71,6 +71,22 @@ def filter_and_score_raw(
             if any(dong in district for dong in HIGH_FOREIGN_DENSITY_DONGS):
                 _reject("외국인 밀집 동 제외 요청"); continue
 
+        # 통근 시간 ('회사가 시청역, 1시간 이내')
+        if condition.get("max_commute_minutes") and condition.get("commute_from"):
+            from tools.molit_api import estimate_commute_minutes
+            est = estimate_commute_minutes(
+                condition["commute_from"],
+                prop.get("region", "") + " " + (prop.get("district", "") or ""),
+            )
+            if est is None:
+                # 거점 매트릭스에 없는 구 → 통근 시간 추정 불가 → 보수적으로 거부
+                if stats is not None:
+                    stats["data_gaps"].setdefault("commute_unknown", 0)
+                    stats["data_gaps"]["commute_unknown"] += 1
+                _reject("통근 시간 추정 불가"); continue
+            if est > condition["max_commute_minutes"]:
+                _reject(f"통근 {est}분 > 한도 {condition['max_commute_minutes']}분"); continue
+
         # 매물 유형 (property_type) 필터 — 다중 값 지원 ("오피스텔,빌라" 등)
         cond_prop = condition.get("property_type")
         if cond_prop:

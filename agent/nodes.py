@@ -59,6 +59,20 @@ class UserConditionModel(BaseModel):
         description="사용자가 '탑층' 또는 '꼭대기 층'을 명시했으면 True",
         default=None,
     )
+    commute_from: Optional[str] = Field(
+        description=(
+            "출퇴근 거점(회사·학교 등)이 있는 역명 또는 구 이름. "
+            "예: '회사가 시청역' → '시청역', '강남에서 일해' → '강남역'"
+        ),
+        default=None,
+    )
+    max_commute_minutes: Optional[int] = Field(
+        description=(
+            "통근 허용 최대 분. '1시간 이내'→60, '30분 거리'→30, "
+            "'1시간 30분'→90 형태로 정수 변환"
+        ),
+        default=None,
+    )
     direction: Optional[str] = Field(description="'남향' | '동향' | '서향' | '북향'", default=None)
     max_building_age: Optional[int] = Field(description="최대 건물 연식", default=None)
     lifestyle: Optional[LifestyleModel] = None
@@ -270,6 +284,8 @@ def parse_condition_node(state: AgentState) -> AgentState:
             "top_floor_only":     parsed.get("top_floor_only"),
             "direction":          parsed.get("direction"),
             "max_building_age":   parsed.get("max_building_age"),
+            "commute_from":       parsed.get("commute_from"),
+            "max_commute_minutes": parsed.get("max_commute_minutes"),
         }.items() if v is not None
     }
 
@@ -337,6 +353,30 @@ def parse_condition_node(state: AgentState) -> AgentState:
     if re.search(r"(중국인|외국인).{0,6}(많지\s*않|적은|없는|싫)", user_input):
         condition["exclude_high_foreign_density"] = True
         print("[parse 보강] '중국인/외국인 많지 않은' 감지 → exclude_high_foreign_density=True")
+
+    # 통근 거점 패턴: '회사가 시청역', '회사 강남', '출근 시청'
+    if not condition.get("commute_from"):
+        m = re.search(
+            r"(?:회사|직장|출근|통근|학교)[은이가는\s]*([가-힣A-Za-z]+(?:역|구|동))",
+            user_input,
+        )
+        if m:
+            condition["commute_from"] = m.group(1)
+            print(f"[parse 보강] 통근 거점 → commute_from='{m.group(1)}'")
+
+    # 통근 시간 패턴: 'N시간 M분 이내', 'N시간 이내', 'N분 거리/이내' (도보가 아닌 경우)
+    if not condition.get("max_commute_minutes"):
+        if condition.get("commute_from") or re.search(r"(통근|출퇴근|회사까지|대중교통)", user_input):
+            mh = re.search(r"(\d+)\s*시간(?:\s*(\d+)\s*분)?", user_input)
+            mm = re.search(r"(?<!도보\s)(\d+)\s*분\s*(?:이내|거리|이하)", user_input)
+            total = None
+            if mh:
+                total = int(mh.group(1)) * 60 + int(mh.group(2) or 0)
+            elif mm:
+                total = int(mm.group(1))
+            if total:
+                condition["max_commute_minutes"] = total
+                print(f"[parse 보강] 통근 시간 → max_commute_minutes={total}분")
 
     # LLM 억 단위 계산 오류 교정
     condition = _correct_amounts(condition, user_input)

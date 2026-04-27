@@ -21,6 +21,8 @@ class UserCondition(TypedDict, total=False):
     direction:          Optional[str]    # "남향" | "동향" | "서향" | "북향" 등
     max_building_age:   Optional[int]    # 최대 건물 연식 (년)
     exclude_high_foreign_density: Optional[bool]  # 외국인 밀집 동 제외 ("중국인 많지 않은" 등)
+    commute_from:        Optional[str]            # 출퇴근 거점 역/구 (예: "시청역", "강남역")
+    max_commute_minutes: Optional[int]            # 통근 최대 분 (예: 60 = 1시간 이내)
 
 
 class UserLifestyle(TypedDict, total=False):
