@@ -401,19 +401,30 @@ def search_and_filter_node(state: AgentState) -> AgentState:
 
     print(f"[search] 실거래 API 조회 (relaxed={relaxed}, neighbors={neighbor_count})")
 
+    # 매 검색마다 이전 stats 잔재 초기화 (이전 turn의 카운터가 새 결과에 새지 않도록)
+    base_state = {
+        **state,
+        "search_results":   [],
+        "filtered_results": [],
+        "filter_stats":     {},
+    }
+
     try:
         search_results = search_real_properties_expanded(condition, neighbor_count)
     except EnvironmentError as e:
-        return {**state, "search_results": [], "filtered_results": [], "error_message": str(e)}
+        return {**base_state, "error_message": str(e)}
     except Exception as e:
-        return {**state, "search_results": [], "filtered_results": [], "error_message": f"API 오류: {e}"}
+        return {**base_state, "error_message": f"API 오류: {e}"}
 
     if not search_results:
+        # MOLIT가 빈 결과 → 지역코드 미지원 또는 해당 기간 거래 없음
         return {
-            **state,
-            "search_results":   [],
-            "filtered_results": [],
-            "error_message":    "해당 조건의 실거래 데이터가 없습니다. 지역이나 거래유형을 변경해보세요.",
+            **base_state,
+            "error_message": (
+                f"'{condition.get('region', '')}' 지역에서 실거래 데이터를 가져오지 못했어요. "
+                "지역명을 더 구체적으로 적거나(예: '성동구', '강남구'), "
+                "구 단위로 입력해 주세요."
+            ),
         }
 
     print(f"[search] {len(search_results)}건 수집")
@@ -521,6 +532,22 @@ def recommend_node(state: AgentState) -> AgentState:
         rejected     = filter_stats.get("rejected_by") or {}
         data_gaps    = filter_stats.get("data_gaps") or {}
         total_rejected = sum(rejected.values())
+
+        # MOLIT 자체가 빈 결과를 준 경우 (지역코드 미지원 등) — error_message가 있고 rejected가 없음
+        err_msg = state.get("error_message")
+        search_count = len(state.get("search_results") or [])
+        if err_msg and search_count == 0 and not rejected:
+            return {
+                **state,
+                "recommendations": (
+                    "❌ 검색 자체가 안 됐어요.\n\n"
+                    f"⚠️ {err_msg}\n\n"
+                    "💡 시도해볼만한 조정:\n"
+                    "• 지역을 **구 단위**로 명시해보세요 (예: '성동구', '강남구')\n"
+                    "• 동·역 이름 조합('금호동 옥수역')은 매핑이 부정확할 수 있어요\n"
+                    "• 최근 3개월 내 거래가 없는 구일 수도 있어요 — 인근 구를 추가해보세요"
+                ),
+            }
 
         msg_lines = ["❌ 조건에 정확히 맞는 매물을 찾지 못했어요."]
 
