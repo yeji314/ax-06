@@ -25,7 +25,16 @@ class LifestyleModel(BaseModel):
     raw_keywords: Optional[str] = Field(description="생활권 원문", default=None)
 
 class UserConditionModel(BaseModel):
-    region: Optional[str] = Field(description="지역명", default=None)
+    region: Optional[str] = Field(
+        description=(
+            "지역명. 다음 형태를 모두 인정합니다: "
+            "구/시 이름(예: 마포구, 강남구), 동 이름(예: 공덕동), "
+            "지하철역 이름(예: 서울역, 강남역, 홍대), "
+            "지하철 노선 이름(예: 2호선, 7호선, 분당선, 신분당선), "
+            "랜드마크(예: 한강, 잠실)"
+        ),
+        default=None,
+    )
     deal_type: Optional[str] = Field(description="'월세' | '전세' | '매매'", default=None)
     max_deposit: Optional[int] = Field(description="보증금 (만원 단위 정수)", default=None)
     max_monthly: Optional[int] = Field(description="월세 (만원 단위 정수)", default=None)
@@ -124,6 +133,32 @@ def _sanitize_input(text: str) -> str:
     return cleaned
 
 
+# 긴 패턴부터 매칭하고 매칭된 부분은 제거 → 중복 추출 방지 (신분당선이 분당선과 둘 다 잡히는 문제)
+_SUBWAY_LINE_PATTERNS = [
+    r"수인분당선", r"신분당선",
+    r"경의중앙선", r"공항철도", r"우이신설선", r"신림선",
+    r"GTX[-\s]?[A-D]",
+    r"분당선",
+    r"\d+\s*호선",
+]
+
+
+def _extract_subway_lines(text: str) -> list[str]:
+    """텍스트에서 '2호선', '분당선' 등 지하철 노선명을 추출 (긴 패턴 우선)."""
+    if not text:
+        return []
+    remaining = text
+    found: list[str] = []
+    for pattern in _SUBWAY_LINE_PATTERNS:
+        for m in re.findall(pattern, remaining):
+            normalized = re.sub(r"\s+", "", m)  # "2 호선" → "2호선"
+            if normalized not in found:
+                found.append(normalized)
+        # 매칭된 부분 공백으로 치환 → 다음 짧은 패턴이 같은 위치에 다시 매칭되지 않도록
+        remaining = re.sub(pattern, " ", remaining)
+    return found
+
+
 def parse_condition_node(state: AgentState) -> AgentState:
     user_input = _sanitize_input(state["user_input"])
     parsed     = {}
@@ -181,6 +216,19 @@ def parse_condition_node(state: AgentState) -> AgentState:
         "atmosphere":   raw_ls.get("atmosphere")   or prior_ls.get("atmosphere"),
         "raw_keywords": raw_ls.get("raw_keywords") or prior_ls.get("raw_keywords"),
     }
+
+    # 지하철 노선이 입력에 있으면 region에 보강 (LLM이 놓치는 경우 안전망)
+    subway_lines = _extract_subway_lines(user_input)
+    if subway_lines:
+        existing_region = condition.get("region", "") or ""
+        # region에 노선이 없거나 region이 비어있으면 추가
+        missing_lines = [ln for ln in subway_lines if ln not in existing_region]
+        if missing_lines:
+            condition["region"] = (
+                " ".join([existing_region, *missing_lines]).strip()
+                if existing_region else " ".join(missing_lines)
+            )
+            print(f"[parse 보강] 노선 인식 → region='{condition['region']}'")
 
     # LLM 억 단위 계산 오류 교정
     condition = _correct_amounts(condition, user_input)
