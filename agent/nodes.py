@@ -40,7 +40,13 @@ class UserConditionModel(BaseModel):
     max_monthly: Optional[int] = Field(description="월세 (만원 단위 정수)", default=None)
     max_price: Optional[int] = Field(description="매매가 (만원 단위 정수)", default=None)
     min_area: Optional[float] = Field(description="최소 면적 (m²)", default=None)
-    property_type: Optional[str] = Field(description="'원룸' | '투룸' | '쓰리룸' | '아파트' | '오피스텔'", default=None)
+    property_type: Optional[str] = Field(
+        description=(
+            "방 종류. 허용값: '원룸', '투룸', '쓰리룸', '아파트', '오피스텔', '빌라'. "
+            "사용자가 여러 개를 원하면 쉼표로 구분 (예: '오피스텔, 빌라', '아파트,오피스텔')"
+        ),
+        default=None,
+    )
     min_households: Optional[int] = Field(description="최소 세대수", default=None)
     parking_required: Optional[bool] = Field(description="주차 필수 여부", default=None)
     building_structure: Optional[str] = Field(description="'계단식' | '복도식'", default=None)
@@ -121,7 +127,15 @@ def _parse_input(user_input: str) -> dict:
         return response.model_dump(exclude_none=True)
 
 
-_VALID_PROPERTY_TYPES = {"원룸", "투룸", "쓰리룸", "아파트", "오피스텔"}
+_VALID_PROPERTY_TYPES = {"원룸", "투룸", "쓰리룸", "아파트", "오피스텔", "빌라"}
+
+
+def _parse_property_types(value: str) -> list[str]:
+    """property_type 문자열을 유효한 타입 리스트로 분해 (다중 선택 지원)."""
+    if not value:
+        return []
+    parts = re.split(r"[,/\s]+", value.strip())
+    return [p for p in parts if p in _VALID_PROPERTY_TYPES]
 _VALID_DEAL_TYPES     = {"월세", "전세", "매매"}
 _VALID_ACTIVITIES     = {"런닝", "자전거", "등산", "수영", "헬스"}
 _VALID_AMENITIES      = {"공원", "한강", "카페", "헬스장", "마트", "병원", "학교", "편의점"}
@@ -210,11 +224,20 @@ def parse_condition_node(state: AgentState) -> AgentState:
     except Exception as e:
         print(f"[parse 오류] {e}")
 
-    # 화이트리스트 필터링: LLM이 임의 문자열을 만들어내는 경우 방어
+    # property_type: 다중 값 지원 ("오피스텔, 빌라" → "오피스텔,빌라")
     pt = parsed.get("property_type")
-    if pt and pt not in _VALID_PROPERTY_TYPES:
-        print(f"[parse 경고] 잘못된 property_type='{pt}' → 무시")
-        parsed["property_type"] = None
+    if pt:
+        valid_pts = _parse_property_types(pt)
+        # 입력에 명시되지 않은 값은 제거 (LLM 추론 차단)
+        valid_pts = [p for p in valid_pts if p in user_input]
+        if not valid_pts:
+            print(f"[parse 경고] property_type='{pt}' 유효값 없음 또는 입력 미명시 → 무시")
+            parsed["property_type"] = None
+        else:
+            normalized = ",".join(valid_pts)
+            if normalized != pt:
+                print(f"[parse] property_type 정규화: '{pt}' → '{normalized}'")
+            parsed["property_type"] = normalized
 
     dt = parsed.get("deal_type")
     if dt and dt not in _VALID_DEAL_TYPES:
@@ -222,13 +245,9 @@ def parse_condition_node(state: AgentState) -> AgentState:
         parsed["deal_type"] = None
 
     # 사용자가 명시적으로 말한 경우에만 인정 (LLM이 가격·문맥에서 추론하는 것 차단)
-    # 예: '15억' → LLM이 매매로 추론 → 텍스트에 '매매'·'사다'·'전세'·'월세' 없으면 거부
     if parsed.get("deal_type") and not any(dt in user_input for dt in _VALID_DEAL_TYPES):
         print(f"[parse] deal_type='{parsed['deal_type']}' 텍스트 미명시 → 추론 거부")
         parsed["deal_type"] = None
-    if parsed.get("property_type") and not any(p in user_input for p in _VALID_PROPERTY_TYPES):
-        print(f"[parse] property_type='{parsed['property_type']}' 텍스트 미명시 → 추론 거부")
-        parsed["property_type"] = None
 
     # 새로 파싱된 필드 (None 제거)
     new_fields = {

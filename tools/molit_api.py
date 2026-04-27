@@ -620,12 +620,14 @@ def search_real_properties(condition: dict) -> list[dict]:
 
     months = _recent_months(3)
 
-    # property_type에 맞는 엔드포인트만 호출 (불필요한 빌라 호출 차단)
-    # - 아파트: apt_* 만
-    # - 빌라:   rh_* 만
-    # - 오피스텔/원룸/투룸/쓰리룸/미지정: 둘 다 (이후 _classify_real_type + filter가 거름)
-    use_apt = property_type in ("", "아파트", "오피스텔", "원룸", "투룸", "쓰리룸")
-    use_rh  = property_type in ("", "빌라", "오피스텔", "원룸", "투룸", "쓰리룸")
+    # property_type에 맞는 엔드포인트만 호출 (다중 값 "오피스텔,빌라" 등 지원)
+    pt_parts = [p for p in re.split(r"[,/\s]+", property_type) if p] if property_type else []
+    if not pt_parts:
+        use_apt = True
+        use_rh  = True
+    else:
+        use_apt = any(p in ("아파트", "오피스텔", "원룸", "투룸", "쓰리룸") for p in pt_parts)
+        use_rh  = any(p in ("빌라", "오피스텔", "원룸", "투룸", "쓰리룸") for p in pt_parts)
 
     # 거래유형별 호출 대상 결정
     if deal_type in ("월세", "전세"):

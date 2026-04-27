@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 
@@ -63,7 +64,7 @@ def filter_and_score_raw(
         if cond_deal and deal_type != cond_deal:
             _reject("거래유형 불일치"); continue
 
-        # 매물 유형 (property_type) 필터 — MOLIT 유형 매핑 포함
+        # 매물 유형 (property_type) 필터 — 다중 값 지원 ("오피스텔,빌라" 등)
         cond_prop = condition.get("property_type")
         if cond_prop:
             TYPE_MAP = {
@@ -74,7 +75,12 @@ def filter_and_score_raw(
                 "아파트":  ["아파트"],
                 "빌라":    ["빌라"],
             }
-            if prop.get("type", "") not in TYPE_MAP.get(cond_prop, [cond_prop]):
+            # 사용자가 OR로 여러 유형 요청 → 모두 합집합으로 허용
+            cond_types = [t for t in re.split(r"[,/\s]+", cond_prop) if t]
+            allowed_btypes: set[str] = set()
+            for ct in cond_types:
+                allowed_btypes.update(TYPE_MAP.get(ct, [ct]))
+            if prop.get("type", "") not in allowed_btypes:
                 _reject("방종류 불일치"); continue
 
         # 가격
