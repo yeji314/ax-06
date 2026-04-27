@@ -461,6 +461,13 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     near_dongs = get_dongs_near_station(region) or get_dongs_near_station(user_input)
     if near_dongs:
         print(f"[search] 역 인근 모드 → 도보권 동: {near_dongs}")
+        # verify의 region 체크가 'OO역' 토큰을 매물 district에서 못 찾고 모두 탈락시키는
+        # 문제 차단 — condition.region에 도보권 동 이름을 추가해 매칭 가능하게 함
+        existing_tokens = set(region.split())
+        added = [d for d in near_dongs if d not in existing_tokens]
+        if added:
+            condition["region"] = " ".join([region.strip(), *added]).strip()
+            print(f"[search] verify용 region 확장: '{condition['region']}'")
 
     # 1) region 자체에서 지하철 노선 감지 (예: "2호선 근처")
     line_gus = infer_gus_from_subway_line(region) or infer_gus_from_subway_line(user_input)
@@ -619,10 +626,30 @@ def verify_node(state: AgentState) -> AgentState:
     condition = state.get("condition", {})
     filtered  = state.get("filtered_results", [])
 
-    verified = [
-        p for p in filtered
-        if _check_price(p, condition) and _check_type(p, condition) and _check_region(p, condition)
-    ]
+    # 탈락 사유별 카운트 (filter_stats에 합산해 recommend가 보여줄 수 있도록)
+    verify_rejected: dict[str, int] = {}
+    verified: list[dict] = []
+    for p in filtered:
+        if not _check_price(p, condition):
+            verify_rejected["verify-가격"] = verify_rejected.get("verify-가격", 0) + 1
+            continue
+        if not _check_type(p, condition):
+            verify_rejected["verify-거래유형"] = verify_rejected.get("verify-거래유형", 0) + 1
+            continue
+        if not _check_region(p, condition):
+            verify_rejected["verify-지역"] = verify_rejected.get("verify-지역", 0) + 1
+            continue
+        verified.append(p)
+
+    if verify_rejected:
+        # 기존 filter_stats에 합산
+        merged = dict(state.get("filter_stats") or {})
+        merged.setdefault("rejected_by", {})
+        for k, v in verify_rejected.items():
+            merged["rejected_by"][k] = merged["rejected_by"].get(k, 0) + v
+        state = {**state, "filter_stats": merged}
+        summary = ", ".join(f"{r} {n}건" for r, n in verify_rejected.items())
+        print(f"[verify] 탈락 사유: {summary}")
 
     print(f"[verify] {len(filtered)}건 → {len(verified)}건 통과")
 
@@ -719,6 +746,16 @@ def recommend_node(state: AgentState) -> AgentState:
             suggestions.append(f"• '{condition['property_type']}' 외 다른 유형도 고려해보세요")
         if condition.get("region"):
             suggestions.append(f"• '{condition['region']}' 외 인근 지역도 추가해보세요")
+        if "verify-지역" in rejected:
+            suggestions.append(
+                "⚠️ verify 단계 지역 매칭 실패 — 입력한 지역명과 실거래 매물의 행정동이 "
+                "일치하지 않습니다. 보다 일반적인 지역명(예: 구·동)으로 시도해보세요."
+            )
+        if "verify-가격" in rejected:
+            suggestions.append(
+                "⚠️ verify 단계에서 상위 매물이 가격 상한을 초과했습니다 — filter는 통과해도 "
+                "최종 검증에서 가격이 다시 체크됐어요. 상한을 더 올려보세요."
+            )
 
         if suggestions:
             msg_lines.append("")
