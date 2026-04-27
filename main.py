@@ -140,6 +140,7 @@ def _print_results(state: dict) -> None:
         table.add_column("가격", style="green")
         table.add_column("면적", style="white")
         table.add_column("층", style="white")
+        table.add_column("실거래일", style="dim")
         table.add_column("점수", style="yellow")
 
         for p in filtered:
@@ -164,6 +165,7 @@ def _print_results(state: dict) -> None:
                 price_str,
                 f"{p.get('area_m2', '-')}m²",
                 f"{p.get('floor', '-')}/{p.get('total_floors', '-')}",
+                str(p.get("deal_date", "-")),
                 str(p.get("score", 0)),
             )
         console.print(table)

@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import Optional
@@ -256,6 +257,16 @@ def _to_float(s: str) -> float:
         return 0.0
 
 
+def _format_deal_date(year: str, month: str, day: str = "") -> str:
+    """MOLIT의 dealYear/Month/Day → 'YYYY-MM-DD' 또는 'YYYY-MM' (day 없을 때)."""
+    if not year or not month:
+        return ""
+    y = year.strip().zfill(4)
+    m = month.strip().zfill(2)
+    d = (day or "").strip().zfill(2) if day else ""
+    return f"{y}-{m}-{d}" if d else f"{y}-{m}"
+
+
 # ── XML 파싱 ──────────────────────────────────────────────────────────────────
 
 def _parse_rent_item(item: ET.Element, btype: str) -> Optional[dict]:
@@ -277,6 +288,8 @@ def _parse_rent_item(item: ET.Element, btype: str) -> Optional[dict]:
     dong  = _g(item, "umdNm")
     year  = _g(item, "dealYear")
     month = _g(item, "dealMonth")
+    day   = _g(item, "dealDay")
+    deal_date = _format_deal_date(year, month, day)
 
     return {
         "id":                 "",
@@ -298,10 +311,11 @@ def _parse_rent_item(item: ET.Element, btype: str) -> Optional[dict]:
         "bathrooms":          0,
         "direction":          "",
         "built_year":         _to_int(_g(item, "buildYear")),
+        "deal_date":          deal_date,
         "features":           [],
         "neighborhood_features": [],
         "lifestyle_score":    0,
-        "description":        f"{year}년 {month}월 실거래 ({btype} {deal_type})",
+        "description":        f"{deal_date} 실거래 ({btype} {deal_type})",
         "score":              0,
     }
 
@@ -318,24 +332,38 @@ OFFICETEL_NAME_HINTS = (
     "스튜디오", "더 리브",
 )
 
-# '럭스빌', '블루빌' 같은 다세대주택 브랜드 — 이름에 있으면 거의 확실히 빌라
 VILLA_NAME_HINTS = (
-    "럭스빌", "블루빌", "그린빌", "네오빌",
-    "럭키빌", "프린스빌", "팰리스빌",
-    "에이스빌", "골든빌", "리치빌", "캐슬빌",
-    "스카이빌", "비스타빌", "쉐르빌",
-    "코아빌", "로얄빌", "더 빌",
     "맨션",  # OO맨션은 보통 다세대주택
+    "다세대", "연립", "원룸",
 )
+
+# 진짜 아파트인데 이름이 'OO빌'로 끝나는 예외 단지 (정규식 매칭에서 제외)
+APT_BRAND_WHITELIST = (
+    "센트레빌",  # 동부 센트레빌 — 진짜 아파트 브랜드
+)
+
+# 'OO빌' suffix 패턴 — 한글 2~4자 + '빌' 다음에 단어 경계(공백·괄호·숫자·점·끝)
+_VILLA_SUFFIX_RE = re.compile(r"[가-힣]{2,4}빌(?=[\s\(\)\[\]\d.,]|$)")
+
+
+def _looks_like_villa(name: str) -> bool:
+    """이름의 'OO빌' suffix 패턴으로 빌라 판정 (브랜드 키워드 의존도 줄임)."""
+    if not name:
+        return False
+    if any(brand in name for brand in APT_BRAND_WHITELIST):
+        return False
+    return bool(_VILLA_SUFFIX_RE.search(name))
 
 
 def _classify_real_type(name: str, default_btype: str) -> str:
-    """매물 이름의 브랜드 키워드로 type 재분류 — 오피스텔/빌라 우선 판정."""
+    """매물 이름·패턴으로 type 재분류.
+    우선순위: 오피스텔 명시 > 빌라 패턴/명시 > 기본(엔드포인트 라벨).
+    """
     if not name:
         return default_btype
     if any(h in name for h in OFFICETEL_NAME_HINTS):
         return "오피스텔"
-    if any(h in name for h in VILLA_NAME_HINTS):
+    if _looks_like_villa(name) or any(h in name for h in VILLA_NAME_HINTS):
         return "빌라"
     return default_btype
 
@@ -477,8 +505,9 @@ def search_real_properties(condition: dict) -> list[dict]:
         매물 dict 리스트 (filter_and_score_raw 입력 형식)
         지역코드 없거나 API 오류 시 []
     """
-    region    = condition.get("region", "")
-    deal_type = condition.get("deal_type", "")
+    region        = condition.get("region", "")
+    deal_type     = condition.get("deal_type", "")
+    property_type = condition.get("property_type", "")
 
     lawd_cd = get_lawd_cd(region)
     if not lawd_cd:
@@ -487,17 +516,22 @@ def search_real_properties(condition: dict) -> list[dict]:
 
     months = _recent_months(3)
 
+    # property_type에 맞는 엔드포인트만 호출 (불필요한 빌라 호출 차단)
+    # - 아파트: apt_* 만
+    # - 빌라:   rh_* 만
+    # - 오피스텔/원룸/투룸/쓰리룸/미지정: 둘 다 (이후 _classify_real_type + filter가 거름)
+    use_apt = property_type in ("", "아파트", "오피스텔", "원룸", "투룸", "쓰리룸")
+    use_rh  = property_type in ("", "빌라", "오피스텔", "원룸", "투룸", "쓰리룸")
+
     # 거래유형별 호출 대상 결정
     if deal_type in ("월세", "전세"):
-        targets = [
-            ("아파트", _parse_rent_item, EP["apt_rent"]),
-            ("빌라",   _parse_rent_item, EP["rh_rent"]),
-        ]
+        targets = []
+        if use_apt: targets.append(("아파트", _parse_rent_item, EP["apt_rent"]))
+        if use_rh:  targets.append(("빌라",   _parse_rent_item, EP["rh_rent"]))
     elif deal_type == "매매":
-        targets = [
-            ("아파트", _parse_trade_item, EP["apt_trade"]),
-            ("빌라",   _parse_trade_item, EP["rh_trade"]),
-        ]
+        targets = []
+        if use_apt: targets.append(("아파트", _parse_trade_item, EP["apt_trade"]))
+        if use_rh:  targets.append(("빌라",   _parse_trade_item, EP["rh_trade"]))
     else:
         targets = [
             ("아파트", _parse_rent_item,  EP["apt_rent"]),
