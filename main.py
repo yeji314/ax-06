@@ -189,10 +189,17 @@ def _print_results(state: dict) -> None:
 
 
 def _read_input(prompt: str = "🏡 ") -> str:
-    """EOF/Ctrl+C를 안전하게 처리하는 입력 헬퍼."""
-    console.print(f"[bold cyan]{prompt}[/bold cyan] ", end="")
+    """
+    EOF/Ctrl+C를 안전하게 처리하는 입력 헬퍼.
+
+    readline이 프롬프트 폭을 정확히 인식하도록 ANSI 색상 코드를
+    \\001 .. \\002 마커로 감싼다 (readline의 RL_PROMPT_*_IGNORE).
+    이렇게 해야 backspace가 프롬프트를 침범하지 않는다.
+    """
+    # \001/\002 = readline에 "이 사이는 비표시 문자" 표시
+    prompt_str = f"\001\033[1;36m\002{prompt}\001\033[0m\002 "
     try:
-        return input().strip()
+        return input(prompt_str).strip()
     except (EOFError, KeyboardInterrupt):
         return "q"
 
