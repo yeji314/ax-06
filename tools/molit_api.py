@@ -494,12 +494,11 @@ def search_real_properties(condition: dict) -> list[dict]:
         ]
 
     results, idx = [], 1
+    btype_counts: dict[str, int] = {}
 
     for btype, parser, endpoint in targets:
         for ym in months:
             items = _fetch(endpoint, lawd_cd, ym)
-            print(f"[MOLIT] {btype} {deal_type or '전체'} {ym} → {len(items)}건")
-
             for item in items:
                 parsed = parser(item, btype)
                 if parsed:
@@ -508,8 +507,10 @@ def search_real_properties(condition: dict) -> list[dict]:
                     parsed["region"] = f"{region} {parsed.get('district', '')}".strip()
                     idx += 1
                     results.append(parsed)
+                    btype_counts[btype] = btype_counts.get(btype, 0) + 1
 
-    print(f"[MOLIT] 총 {len(results)}건 (지역: {region}, 최근 3개월)")
+    breakdown = ", ".join(f"{k} {v}건" for k, v in btype_counts.items()) or "0건"
+    print(f"[MOLIT] {region} {deal_type or '전체'} 3개월: {breakdown} = 총 {len(results)}건")
     return results
 
 
