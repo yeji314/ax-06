@@ -97,6 +97,10 @@ def _parse_input(user_input: str) -> dict:
     return response.model_dump(exclude_none=True)
 
 
+_VALID_PROPERTY_TYPES = {"원룸", "투룸", "쓰리룸", "아파트", "오피스텔"}
+_VALID_DEAL_TYPES     = {"월세", "전세", "매매"}
+
+
 def parse_condition_node(state: AgentState) -> AgentState:
     user_input = state["user_input"]
     parsed     = {}
@@ -106,8 +110,19 @@ def parse_condition_node(state: AgentState) -> AgentState:
     except Exception as e:
         print(f"[parse 오류] {e}")
 
-    # None 제거 후 조건 구성
-    condition: UserCondition = {
+    # 화이트리스트 필터링: LLM이 임의 문자열을 만들어내는 경우 방어
+    pt = parsed.get("property_type")
+    if pt and pt not in _VALID_PROPERTY_TYPES:
+        print(f"[parse 경고] 잘못된 property_type='{pt}' → 무시")
+        parsed["property_type"] = None
+
+    dt = parsed.get("deal_type")
+    if dt and dt not in _VALID_DEAL_TYPES:
+        print(f"[parse 경고] 잘못된 deal_type='{dt}' → 무시")
+        parsed["deal_type"] = None
+
+    # 새로 파싱된 필드 (None 제거)
+    new_fields = {
         k: v for k, v in {
             "region":             parsed.get("region"),
             "deal_type":          parsed.get("deal_type"),
@@ -128,12 +143,20 @@ def parse_condition_node(state: AgentState) -> AgentState:
         }.items() if v is not None
     }
 
-    raw_ls = parsed.get("lifestyle") or {}
+    # 멀티턴: 이전 condition과 병합 (이전 정보 유지 + 새 정보로 덮어쓰기)
+    prior_condition = dict(state.get("condition") or {})
+    condition: UserCondition = {**prior_condition, **new_fields}
+
+    # lifestyle도 병합 (리스트는 합집합, 스칼라는 새 값 우선)
+    prior_ls = dict(state.get("lifestyle") or {})
+    raw_ls   = parsed.get("lifestyle") or {}
+    new_acts  = raw_ls.get("activities") or []
+    new_amens = raw_ls.get("amenities") or []
     lifestyle: UserLifestyle = {
-        "activities":   raw_ls.get("activities") or [],
-        "atmosphere":   raw_ls.get("atmosphere"),
-        "amenities":    raw_ls.get("amenities") or [],
-        "raw_keywords": raw_ls.get("raw_keywords"),
+        "activities":   list(dict.fromkeys([*(prior_ls.get("activities") or []), *new_acts])),
+        "amenities":    list(dict.fromkeys([*(prior_ls.get("amenities") or []), *new_amens])),
+        "atmosphere":   raw_ls.get("atmosphere")   or prior_ls.get("atmosphere"),
+        "raw_keywords": raw_ls.get("raw_keywords") or prior_ls.get("raw_keywords"),
     }
 
     # LLM 억 단위 계산 오류 교정
