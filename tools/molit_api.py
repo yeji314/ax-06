@@ -75,6 +75,66 @@ def get_base_gu(region_text: str) -> Optional[str]:
     return None
 
 
+# 광역 region (구 미지정) 감지용
+BROAD_REGION_TOKENS = {"서울", "수도권", "경기", "전국"}
+
+
+def is_broad_region(region_text: str) -> bool:
+    """베이스 구를 추출할 수 없고 광역 토큰만 들어있는지."""
+    if get_base_gu(region_text) is not None:
+        return False
+    return any(tok in region_text for tok in BROAD_REGION_TOKENS)
+
+
+# 라이프스타일/키워드 → 대표 구 추천 (광역 region일 때 사용)
+LIFESTYLE_KEYWORD_TO_GU: dict[str, list[str]] = {
+    "학군":      ["강남구", "서초구", "양천구", "노원구", "송파구"],
+    "교육":      ["강남구", "서초구", "양천구", "노원구"],
+    "대치":      ["강남구"],
+    "목동":      ["양천구"],
+    "중계":      ["노원구"],
+    "대학":      ["서대문구", "성북구", "동대문구", "관악구"],
+    "한강":      ["용산구", "마포구", "영등포구", "광진구", "성동구"],
+    "공원":      ["송파구", "양천구", "광진구", "노원구"],
+    "카페":      ["마포구", "용산구", "성동구"],
+    "카페거리":  ["마포구", "용산구", "성동구"],
+    "쇼핑":      ["중구", "강남구", "송파구"],
+    "번화가":    ["중구", "강남구", "마포구"],
+    "조용":      ["서초구", "양천구", "송파구"],
+    "자연":      ["노원구", "강북구", "도봉구"],
+    "런닝":      ["용산구", "성동구", "송파구"],
+    "자전거":    ["성동구", "송파구", "광진구"],
+    "헬스":      ["강남구", "서초구"],
+    "맛집":      ["마포구", "용산구", "강남구"],
+    "역세권":    ["중구", "강남구", "마포구"],
+}
+
+
+def infer_gus_from_lifestyle(
+    lifestyle: dict, max_count: int = 3
+) -> list[str]:
+    """라이프스타일 dict에서 키워드를 뽑아 대표 구 리스트로 변환."""
+    if not lifestyle:
+        return []
+
+    haystack_parts = [
+        str(lifestyle.get("raw_keywords") or ""),
+        str(lifestyle.get("atmosphere") or ""),
+        " ".join(lifestyle.get("activities") or []),
+        " ".join(lifestyle.get("amenities") or []),
+    ]
+    haystack = " ".join(haystack_parts)
+
+    # 키워드 등장 순으로 추천 구를 모음 (중복 제거 + 순서 보존)
+    seen: list[str] = []
+    for keyword, gus in LIFESTYLE_KEYWORD_TO_GU.items():
+        if keyword in haystack:
+            for g in gus:
+                if g not in seen:
+                    seen.append(g)
+    return seen[:max_count]
+
+
 # 랜드마크/지하철역/동 이름 → 인접 구 (LAWD_CD_MAP 매칭 실패 시 폴백)
 LANDMARK_TO_GU: dict[str, str] = {
     # 중구·용산
@@ -400,37 +460,46 @@ def search_real_properties(condition: dict) -> list[dict]:
 
 def search_real_properties_expanded(condition: dict, neighbor_count: int = 0) -> list[dict]:
     """
-    기본 region + 인접 구 N개를 함께 조회 (verify 재시도용 검색 확장).
+    region을 공백으로 분리해 여러 구를 동시 조회 + 인접 구 N개 추가 조회.
 
     Args:
-        condition:      UserCondition dict
-        neighbor_count: 추가 조회할 인접 구 수 (0이면 일반 검색과 동일)
+        condition:      UserCondition dict (region에 공백 구분 다중 구 가능)
+        neighbor_count: 첫 구 기준으로 추가 조회할 인접 구 수
 
     Returns:
-        매물 dict 리스트 (region 필드는 각자의 구 이름으로 유지)
+        매물 dict 리스트 (id 충돌 방지 처리)
     """
-    base_results = search_real_properties(condition)
-    if neighbor_count <= 0:
-        return base_results
+    region = condition.get("region", "") or ""
+    # 공백으로 분리해 각 토큰을 개별 구로 처리 (LAWD_CD 매칭되는 것만)
+    tokens = [t.strip() for t in region.split() if t.strip()]
+    primary_gus: list[str] = []
+    for tok in tokens:
+        gu = get_base_gu(tok)
+        if gu and gu not in primary_gus:
+            primary_gus.append(gu)
 
-    base_gu = get_base_gu(condition.get("region", ""))
-    if not base_gu:
-        return base_results
+    # primary 구 추출 실패 시 기본 동작 (search_real_properties가 실패 로그 출력)
+    if not primary_gus:
+        return search_real_properties(condition)
 
-    neighbors = NEIGHBOR_GU.get(base_gu, [])[:neighbor_count]
-    if not neighbors:
-        return base_results
+    # 인접 구 보강 (첫 구 기준)
+    if neighbor_count > 0:
+        for n_gu in NEIGHBOR_GU.get(primary_gus[0], []):
+            if n_gu not in primary_gus and len(primary_gus) - 1 < len(primary_gus) + neighbor_count:
+                primary_gus.append(n_gu)
+                if len(primary_gus) >= len(tokens) + neighbor_count + 1:
+                    break
 
-    print(f"[MOLIT] 인접 구 확장: {base_gu} + {neighbors}")
+    if len(primary_gus) > 1:
+        print(f"[MOLIT] 다중 구 동시 조회: {primary_gus}")
 
-    seen_ids = {p.get("id") for p in base_results}
-    expanded = list(base_results)
-    next_idx = len(base_results) + 1
+    seen_ids: set[str] = set()
+    merged: list[dict] = []
+    next_idx = 1
 
-    for n_gu in neighbors:
-        nbr_results = search_real_properties({**condition, "region": n_gu})
-        # 인접 구 결과는 id 충돌 방지를 위해 prefix 변경
-        for p in nbr_results:
+    for gu in primary_gus:
+        results = search_real_properties({**condition, "region": gu})
+        for p in results:
             new_id = f"M{next_idx:04d}"
             while new_id in seen_ids:
                 next_idx += 1
@@ -438,7 +507,8 @@ def search_real_properties_expanded(condition: dict, neighbor_count: int = 0) ->
             p["id"] = new_id
             seen_ids.add(new_id)
             next_idx += 1
-            expanded.append(p)
+            merged.append(p)
 
-    print(f"[MOLIT] 확장 후 총 {len(expanded)}건")
-    return expanded
+    if len(primary_gus) > 1:
+        print(f"[MOLIT] 다중 구 합산: 총 {len(merged)}건")
+    return merged

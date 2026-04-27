@@ -262,13 +262,30 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     verify 재시도 시 인접 구로 검색 범위를 점진 확장합니다.
     """
     from tools.molit_api import (
-        NEIGHBOR_GU, get_base_gu, search_real_properties_expanded,
+        NEIGHBOR_GU, get_base_gu, infer_gus_from_lifestyle,
+        is_broad_region, search_real_properties_expanded,
     )
 
     condition = dict(state.get("condition", {}) or {})
-    lifestyle = state.get("lifestyle", {})
+    lifestyle = state.get("lifestyle", {}) or {}
     relaxed   = state.get("relaxed", False)
     verify_retry = state.get("verify_retry_count", 0)
+
+    # 광역 region("서울"·"경기" 등)이면 라이프스타일로 대표 구 추천 → 다중 검색
+    region = condition.get("region", "")
+    if is_broad_region(region):
+        candidates = infer_gus_from_lifestyle(lifestyle, max_count=3)
+        if candidates:
+            condition["region"] = " ".join(candidates)
+            print(
+                f"[search] 광역 지역 '{region}' + 라이프스타일 → "
+                f"대표 구 {candidates} 로 검색"
+            )
+        else:
+            # 라이프스타일 힌트도 없으면 인기 구 3개로 폴백
+            fallback_gus = ["강남구", "마포구", "송파구"]
+            condition["region"] = " ".join(fallback_gus)
+            print(f"[search] 광역 지역 '{region}' → 인기 구 {fallback_gus} 로 폴백 검색")
 
     # verify 재시도 횟수만큼 인접 구 확장 (0회: 그대로, 1회: +1, 2회: +2)
     neighbor_count = verify_retry
