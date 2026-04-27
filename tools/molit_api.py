@@ -283,14 +283,14 @@ def _parse_rent_item(item: ET.Element, btype: str) -> Optional[dict]:
         "title":              f"{name} {dong}".strip() or dong,
         "region":             dong,
         "district":           dong,
-        "type":               btype,
+        "type":               _classify_real_type(name, btype),
         "deal_type":          deal_type,
         "price":              {"deposit": deposit, "monthly": monthly},
         "area_m2":            _to_float(_g(item, "excluUseAr")),
         "floor":              max(_to_int(_g(item, "floor")), 0),
         "total_floors":       0,
         "households":         0,
-        "parking":            btype == "아파트",
+        "parking":            _classify_real_type(name, btype) == "아파트",
         "building_structure": "계단식",
         "subway":             "",
         "subway_minutes":     99,
@@ -304,6 +304,27 @@ def _parse_rent_item(item: ET.Element, btype: str) -> Optional[dict]:
         "description":        f"{year}년 {month}월 실거래 ({btype} {deal_type})",
         "score":              0,
     }
+
+
+# MOLIT의 '아파트 매매' 응답에는 등기상 아파트로 분류된 도시형생활주택·주거형 오피스텔이
+# 섞여 들어옴. 이름의 키워드로 재분류해서 사용자가 '아파트' 요청 시 진짜 아파트만 추리도록 함.
+# ※ '타워'·'시티'·'비젼' 같은 일반 단어는 진짜 아파트 단지명에도 흔해서 제외
+#   (예: 타워팰리스, 센텀시티, 비젼21).
+OFFICETEL_NAME_HINTS = (
+    "오피스텔", "고시텔", "리빙텔",
+    "이빌", "디오빌", "디오슈페리움",
+    "헤리츠빌", "리시온", "리치파크",
+    "스튜디오", "더 리브",
+)
+
+
+def _classify_real_type(name: str, default_btype: str) -> str:
+    """매물 이름에 오피스텔 브랜드 키워드가 있으면 '오피스텔'로 재분류."""
+    if not name:
+        return default_btype
+    if any(h in name for h in OFFICETEL_NAME_HINTS):
+        return "오피스텔"
+    return default_btype
 
 
 def _parse_trade_item(item: ET.Element, btype: str) -> Optional[dict]:
@@ -326,14 +347,14 @@ def _parse_trade_item(item: ET.Element, btype: str) -> Optional[dict]:
         "title":              f"{name} {dong}".strip() or dong,
         "region":             dong,
         "district":           dong,
-        "type":               btype,
+        "type":               _classify_real_type(name, btype),
         "deal_type":          "매매",
         "price":              {"deposit": _to_int(price_raw), "monthly": 0},
         "area_m2":            _to_float(_g(item, "excluUseAr")),
         "floor":              max(_to_int(_g(item, "floor")), 0),
         "total_floors":       0,
         "households":         0,
-        "parking":            btype == "아파트",
+        "parking":            _classify_real_type(name, btype) == "아파트",
         "building_structure": "계단식",
         "subway":             "",
         "subway_minutes":     99,

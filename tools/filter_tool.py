@@ -52,11 +52,11 @@ def filter_and_score_raw(
         cond_prop = condition.get("property_type")
         if cond_prop:
             TYPE_MAP = {
-                "원룸":    ["빌라"],
-                "투룸":    ["빌라"],
+                "원룸":    ["빌라", "오피스텔"],
+                "투룸":    ["빌라", "오피스텔"],
                 "쓰리룸":  ["빌라"],
-                "오피스텔": ["빌라", "아파트"],
-                "아파트":  ["아파트"],
+                "오피스텔": ["오피스텔"],
+                "아파트":  ["아파트"],   # 도시형생활주택·주거형 오피스텔은 사전에 '오피스텔'로 재분류됨
                 "빌라":    ["빌라"],
             }
             if prop.get("type", "") not in TYPE_MAP.get(cond_prop, [cond_prop]):
