@@ -1,11 +1,18 @@
 import json
 import re
+import warnings
 from typing import Optional, List # 추가
 from pydantic import BaseModel, Field # 추가
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langsmith import traceable
+
+# Pydantic + langchain with_structured_output 조합에서 발생하는 무해한 경고 억제
+warnings.filterwarnings(
+    "ignore",
+    message=r".*PydanticSerializationUnexpectedValue.*",
+)
 
 from agent.state import AgentState, UserCondition, UserLifestyle
 from tools.filter_tool import filter_and_score_raw
@@ -87,14 +94,18 @@ def _parse_input(user_input: str) -> dict:
     
     # with_structured_output을 사용하여 완벽한 JSON 포맷을 보장받음
     structured_llm = _llm().with_structured_output(UserConditionModel)
-    
-    response = structured_llm.invoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_input),
-    ])
-    
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        response = structured_llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_input),
+        ])
+
     # Pydantic 객체를 Dict로 변환하여 반환
-    return response.model_dump(exclude_none=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return response.model_dump(exclude_none=True)
 
 
 _VALID_PROPERTY_TYPES = {"원룸", "투룸", "쓰리룸", "아파트", "오피스텔"}
@@ -248,18 +259,33 @@ def clarify_node(state: AgentState) -> AgentState:
 def search_and_filter_node(state: AgentState) -> AgentState:
     """
     국토부 실거래가 API로 실제 매물 데이터를 조회합니다.
-    데이터가 없으면 LLM 생성 없이 빈 결과를 반환합니다.
+    verify 재시도 시 인접 구로 검색 범위를 점진 확장합니다.
     """
-    from tools.molit_api import search_real_properties
+    from tools.molit_api import (
+        NEIGHBOR_GU, get_base_gu, search_real_properties_expanded,
+    )
 
-    condition = state.get("condition", {})
+    condition = dict(state.get("condition", {}) or {})
     lifestyle = state.get("lifestyle", {})
     relaxed   = state.get("relaxed", False)
+    verify_retry = state.get("verify_retry_count", 0)
 
-    print(f"\n[search] 실거래 API 조회 (relaxed={relaxed})")
+    # verify 재시도 횟수만큼 인접 구 확장 (0회: 그대로, 1회: +1, 2회: +2)
+    neighbor_count = verify_retry
+
+    # 인접 구를 검색하면 verify의 region 체크가 막으므로 condition.region을 확장
+    if neighbor_count > 0:
+        base_gu = get_base_gu(condition.get("region", ""))
+        if base_gu:
+            extras = NEIGHBOR_GU.get(base_gu, [])[:neighbor_count]
+            if extras:
+                condition["region"] = " ".join([base_gu, *extras])
+                print(f"[search] verify 재시도 → region 확장: '{condition['region']}'")
+
+    print(f"[search] 실거래 API 조회 (relaxed={relaxed}, neighbors={neighbor_count})")
 
     try:
-        search_results = search_real_properties(condition)
+        search_results = search_real_properties_expanded(condition, neighbor_count)
     except EnvironmentError as e:
         return {**state, "search_results": [], "filtered_results": [], "error_message": str(e)}
     except Exception as e:
@@ -287,6 +313,7 @@ def search_and_filter_node(state: AgentState) -> AgentState:
 
     return {
         **state,
+        "condition":        condition,  # 확장된 region이 verify에서도 통과되도록 반영
         "search_results":   search_results,
         "filtered_results": filtered_results,
         "error_message":    None,

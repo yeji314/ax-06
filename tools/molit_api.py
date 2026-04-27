@@ -34,6 +34,47 @@ LAWD_CD_MAP: dict[str, str] = {
     "분당구": "41135",
 }
 
+# 인접 구 (verify 재시도 시 검색 범위를 점진 확장)
+NEIGHBOR_GU: dict[str, list[str]] = {
+    "종로구":   ["중구", "성북구", "서대문구"],
+    "중구":     ["용산구", "종로구", "마포구"],
+    "용산구":   ["중구", "마포구", "성동구"],
+    "성동구":   ["광진구", "용산구", "동대문구"],
+    "광진구":   ["성동구", "중랑구", "동대문구"],
+    "동대문구": ["중랑구", "성북구", "성동구"],
+    "중랑구":   ["광진구", "동대문구", "노원구"],
+    "성북구":   ["종로구", "강북구", "동대문구"],
+    "강북구":   ["성북구", "도봉구", "노원구"],
+    "도봉구":   ["노원구", "강북구"],
+    "노원구":   ["도봉구", "강북구", "중랑구"],
+    "은평구":   ["서대문구", "마포구"],
+    "서대문구": ["마포구", "은평구", "종로구"],
+    "마포구":   ["용산구", "서대문구", "영등포구"],
+    "양천구":   ["강서구", "영등포구", "구로구"],
+    "강서구":   ["양천구"],
+    "구로구":   ["영등포구", "양천구", "금천구"],
+    "금천구":   ["관악구", "구로구"],
+    "영등포구": ["마포구", "동작구", "양천구"],
+    "동작구":   ["영등포구", "관악구", "서초구"],
+    "관악구":   ["동작구", "서초구", "금천구"],
+    "서초구":   ["강남구", "동작구", "관악구"],
+    "강남구":   ["서초구", "송파구"],
+    "송파구":   ["강남구", "강동구"],
+    "강동구":   ["송파구"],
+}
+
+
+def get_base_gu(region_text: str) -> Optional[str]:
+    """region 텍스트에서 베이스 구 이름을 추출 (인접 구 확장용)."""
+    for gu in LAWD_CD_MAP:
+        if gu in region_text and gu.endswith("구"):
+            return gu
+    for landmark, gu in LANDMARK_TO_GU.items():
+        if landmark in region_text:
+            return gu
+    return None
+
+
 # 랜드마크/지하철역/동 이름 → 인접 구 (LAWD_CD_MAP 매칭 실패 시 폴백)
 LANDMARK_TO_GU: dict[str, str] = {
     # 중구·용산
@@ -355,3 +396,49 @@ def search_real_properties(condition: dict) -> list[dict]:
 
     print(f"[MOLIT] 총 {len(results)}건 (지역: {region}, 최근 3개월)")
     return results
+
+
+def search_real_properties_expanded(condition: dict, neighbor_count: int = 0) -> list[dict]:
+    """
+    기본 region + 인접 구 N개를 함께 조회 (verify 재시도용 검색 확장).
+
+    Args:
+        condition:      UserCondition dict
+        neighbor_count: 추가 조회할 인접 구 수 (0이면 일반 검색과 동일)
+
+    Returns:
+        매물 dict 리스트 (region 필드는 각자의 구 이름으로 유지)
+    """
+    base_results = search_real_properties(condition)
+    if neighbor_count <= 0:
+        return base_results
+
+    base_gu = get_base_gu(condition.get("region", ""))
+    if not base_gu:
+        return base_results
+
+    neighbors = NEIGHBOR_GU.get(base_gu, [])[:neighbor_count]
+    if not neighbors:
+        return base_results
+
+    print(f"[MOLIT] 인접 구 확장: {base_gu} + {neighbors}")
+
+    seen_ids = {p.get("id") for p in base_results}
+    expanded = list(base_results)
+    next_idx = len(base_results) + 1
+
+    for n_gu in neighbors:
+        nbr_results = search_real_properties({**condition, "region": n_gu})
+        # 인접 구 결과는 id 충돌 방지를 위해 prefix 변경
+        for p in nbr_results:
+            new_id = f"M{next_idx:04d}"
+            while new_id in seen_ids:
+                next_idx += 1
+                new_id = f"M{next_idx:04d}"
+            p["id"] = new_id
+            seen_ids.add(new_id)
+            next_idx += 1
+            expanded.append(p)
+
+    print(f"[MOLIT] 확장 후 총 {len(expanded)}건")
+    return expanded
