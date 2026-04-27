@@ -123,6 +123,44 @@ def _parse_input(user_input: str) -> dict:
 
 _VALID_PROPERTY_TYPES = {"원룸", "투룸", "쓰리룸", "아파트", "오피스텔"}
 _VALID_DEAL_TYPES     = {"월세", "전세", "매매"}
+_VALID_ACTIVITIES     = {"런닝", "자전거", "등산", "수영", "헬스"}
+_VALID_AMENITIES      = {"공원", "한강", "카페", "헬스장", "마트", "병원", "학교", "편의점"}
+_VALID_ATMOSPHERES    = {"조용한", "활발한", "자연친화적", "카페거리", "번화가"}
+
+
+def _filter_lifestyle(raw_ls: dict, user_input: str) -> dict:
+    """LLM이 추론·환각한 라이프스타일 항목을 거부.
+    값이 enum에 있고 사용자가 입력에 명시한 경우에만 통과시킨다.
+    """
+    if not raw_ls:
+        return {}
+
+    activities = [
+        a for a in (raw_ls.get("activities") or [])
+        if a in _VALID_ACTIVITIES and a in user_input
+    ]
+    amenities = [
+        a for a in (raw_ls.get("amenities") or [])
+        if a in _VALID_AMENITIES and a in user_input
+    ]
+    atmosphere = raw_ls.get("atmosphere")
+    if atmosphere and (atmosphere not in _VALID_ATMOSPHERES or atmosphere not in user_input):
+        atmosphere = None
+
+    raw_kw = raw_ls.get("raw_keywords")
+    # raw_keywords는 사용자 텍스트의 부분 문자열이어야만 의미가 있다.
+    if raw_kw and raw_kw not in user_input:
+        raw_kw = None
+    # 모든 다른 필드가 비었으면 raw_keywords도 무의미 → 제거
+    if not (activities or amenities or atmosphere):
+        raw_kw = None
+
+    cleaned = {}
+    if activities: cleaned["activities"] = activities
+    if amenities:  cleaned["amenities"]  = amenities
+    if atmosphere: cleaned["atmosphere"] = atmosphere
+    if raw_kw:     cleaned["raw_keywords"] = raw_kw
+    return cleaned
 
 
 def _sanitize_input(text: str) -> str:
@@ -223,16 +261,16 @@ def parse_condition_node(state: AgentState) -> AgentState:
     prior_condition = dict(state.get("condition") or {})
     condition: UserCondition = {**prior_condition, **new_fields}
 
-    # lifestyle도 병합 (리스트는 합집합, 스칼라는 새 값 우선)
+    # lifestyle: LLM 추론·환각 거르기 + 멀티턴 머지
     prior_ls = dict(state.get("lifestyle") or {})
-    raw_ls   = parsed.get("lifestyle") or {}
-    new_acts  = raw_ls.get("activities") or []
-    new_amens = raw_ls.get("amenities") or []
+    cleaned_ls = _filter_lifestyle(parsed.get("lifestyle") or {}, user_input)
+    new_acts  = cleaned_ls.get("activities", [])
+    new_amens = cleaned_ls.get("amenities", [])
     lifestyle: UserLifestyle = {
         "activities":   list(dict.fromkeys([*(prior_ls.get("activities") or []), *new_acts])),
         "amenities":    list(dict.fromkeys([*(prior_ls.get("amenities") or []), *new_amens])),
-        "atmosphere":   raw_ls.get("atmosphere")   or prior_ls.get("atmosphere"),
-        "raw_keywords": raw_ls.get("raw_keywords") or prior_ls.get("raw_keywords"),
+        "atmosphere":   cleaned_ls.get("atmosphere")   or prior_ls.get("atmosphere"),
+        "raw_keywords": cleaned_ls.get("raw_keywords") or prior_ls.get("raw_keywords"),
     }
 
     # 지하철 노선이 입력에 있으면 region에 보강 (LLM이 놓치는 경우 안전망)
