@@ -392,9 +392,9 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     verify 재시도 시 인접 구로 검색 범위를 점진 확장합니다.
     """
     from tools.molit_api import (
-        NEIGHBOR_GU, get_base_gu, infer_gus_from_lifestyle,
-        infer_gus_from_subway_line, is_broad_region,
-        search_real_properties_expanded,
+        NEIGHBOR_GU, get_base_gu, get_dongs_near_station,
+        infer_gus_from_lifestyle, infer_gus_from_subway_line,
+        is_broad_region, search_real_properties_expanded,
     )
 
     condition = dict(state.get("condition", {}) or {})
@@ -403,8 +403,13 @@ def search_and_filter_node(state: AgentState) -> AgentState:
     verify_retry = state.get("verify_retry_count", 0)
     user_input = state.get("user_input", "") or ""
 
-    # 1) region 자체에서 지하철 노선 감지 (예: "2호선 근처")
+    # 0) region 또는 입력에 'OO역'이 있으면 도보권 동을 추출 → 사후 필터링용
     region = condition.get("region", "") or ""
+    near_dongs = get_dongs_near_station(region) or get_dongs_near_station(user_input)
+    if near_dongs:
+        print(f"[search] 역 인근 모드 → 도보권 동: {near_dongs}")
+
+    # 1) region 자체에서 지하철 노선 감지 (예: "2호선 근처")
     line_gus = infer_gus_from_subway_line(region) or infer_gus_from_subway_line(user_input)
 
     if line_gus and (is_broad_region(region) or get_base_gu(region) is None):
@@ -426,9 +431,9 @@ def search_and_filter_node(state: AgentState) -> AgentState:
             print(f"[search] 광역 지역 '{region}' → 인기 구 {fallback_gus} 로 폴백 검색")
 
     # verify 재시도 횟수만큼 인접 구 확장 (0회: 그대로, 1회: +1, 2회: +2)
-    neighbor_count = verify_retry
+    # ※ 역 인근 모드면 사용자가 특정 역을 명시한 것 → 인접 구 확장은 의도와 다름 → 비활성화
+    neighbor_count = 0 if near_dongs else verify_retry
 
-    # 인접 구를 검색하면 verify의 region 체크가 막으므로 condition.region을 확장
     if neighbor_count > 0:
         base_gu = get_base_gu(condition.get("region", ""))
         if base_gu:
@@ -466,6 +471,15 @@ def search_and_filter_node(state: AgentState) -> AgentState:
         }
 
     print(f"[search] {len(search_results)}건 수집")
+
+    # 역 인근 모드: 도보권 동에 속한 매물만 남김
+    if near_dongs:
+        before = len(search_results)
+        search_results = [
+            p for p in search_results
+            if any(dong in (p.get("district") or "") for dong in near_dongs)
+        ]
+        print(f"[search] 역 인근 동 필터: {before}건 → {len(search_results)}건")
 
     # relaxed 모드: 소프트 조건 완화
     filter_cond = dict(condition)
