@@ -64,6 +64,13 @@ def filter_and_score_raw(
         if cond_deal and deal_type != cond_deal:
             _reject("거래유형 불일치"); continue
 
+        # 외국인 밀집 동 제외 ('중국인 많지 않은 동네')
+        if condition.get("exclude_high_foreign_density"):
+            from tools.molit_api import HIGH_FOREIGN_DENSITY_DONGS
+            district = prop.get("district", "") or ""
+            if any(dong in district for dong in HIGH_FOREIGN_DENSITY_DONGS):
+                _reject("외국인 밀집 동 제외 요청"); continue
+
         # 매물 유형 (property_type) 필터 — 다중 값 지원 ("오피스텔,빌라" 등)
         cond_prop = condition.get("property_type")
         if cond_prop:

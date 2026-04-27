@@ -20,6 +20,7 @@ class UserCondition(TypedDict, total=False):
     top_floor_only:     Optional[bool]   # 탑층(꼭대기 층) 강제 — floor == total_floors
     direction:          Optional[str]    # "남향" | "동향" | "서향" | "북향" 등
     max_building_age:   Optional[int]    # 최대 건물 연식 (년)
+    exclude_high_foreign_density: Optional[bool]  # 외국인 밀집 동 제외 ("중국인 많지 않은" 등)
 
 
 class UserLifestyle(TypedDict, total=False):

@@ -297,7 +297,6 @@ def parse_condition_node(state: AgentState) -> AgentState:
     subway_lines = _extract_subway_lines(user_input)
     if subway_lines:
         existing_region = condition.get("region", "") or ""
-        # region에 노선이 없거나 region이 비어있으면 추가
         missing_lines = [ln for ln in subway_lines if ln not in existing_region]
         if missing_lines:
             condition["region"] = (
@@ -305,6 +304,39 @@ def parse_condition_node(state: AgentState) -> AgentState:
                 if existing_region else " ".join(missing_lines)
             )
             print(f"[parse 보강] 노선 인식 → region='{condition['region']}'")
+
+    # 라이프스타일 키워드를 입력에서 직접 감지해 lifestyle에 반영
+    # (LLM이 raw_keywords를 안 채워도 동작하도록 안전망)
+    from tools.molit_api import LIFESTYLE_KEYWORD_TO_GU
+    detected_amens = []
+    detected_raw   = []
+    for kw in LIFESTYLE_KEYWORD_TO_GU:
+        if kw in user_input and kw not in (lifestyle.get("amenities") or []):
+            detected_amens.append(kw)
+            detected_raw.append(kw)
+    if detected_amens:
+        lifestyle = {
+            **lifestyle,
+            "amenities": [*(lifestyle.get("amenities") or []), *detected_amens],
+            "raw_keywords": lifestyle.get("raw_keywords") or " ".join(detected_raw),
+        }
+        print(f"[parse 보강] 라이프스타일 키워드 → {detected_amens}")
+
+    # region이 비어 있는데 라이프스타일 힌트가 있으면 → 대표 구로 자동 채움
+    # (예: '학군 좋은 매매 15억' → region='강남구 서초구 양천구')
+    if not condition.get("region") and (
+        lifestyle.get("amenities") or lifestyle.get("raw_keywords")
+    ):
+        from tools.molit_api import infer_gus_from_lifestyle as _infer_gus
+        ls_gus = _infer_gus(lifestyle, max_count=3)
+        if ls_gus:
+            condition["region"] = " ".join(ls_gus)
+            print(f"[parse 보강] 라이프스타일 → region 자동 추론 = {ls_gus}")
+
+    # 부정 인구통계 패턴: '중국인/외국인 많지 않은' 등 → 외국인 밀집 동 제외 플래그
+    if re.search(r"(중국인|외국인).{0,6}(많지\s*않|적은|없는|싫)", user_input):
+        condition["exclude_high_foreign_density"] = True
+        print("[parse 보강] '중국인/외국인 많지 않은' 감지 → exclude_high_foreign_density=True")
 
     # LLM 억 단위 계산 오류 교정
     condition = _correct_amounts(condition, user_input)
