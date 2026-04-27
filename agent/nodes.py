@@ -183,6 +183,15 @@ def parse_condition_node(state: AgentState) -> AgentState:
         print(f"[parse 경고] 잘못된 deal_type='{dt}' → 무시")
         parsed["deal_type"] = None
 
+    # 사용자가 명시적으로 말한 경우에만 인정 (LLM이 가격·문맥에서 추론하는 것 차단)
+    # 예: '15억' → LLM이 매매로 추론 → 텍스트에 '매매'·'사다'·'전세'·'월세' 없으면 거부
+    if parsed.get("deal_type") and not any(dt in user_input for dt in _VALID_DEAL_TYPES):
+        print(f"[parse] deal_type='{parsed['deal_type']}' 텍스트 미명시 → 추론 거부")
+        parsed["deal_type"] = None
+    if parsed.get("property_type") and not any(p in user_input for p in _VALID_PROPERTY_TYPES):
+        print(f"[parse] property_type='{parsed['property_type']}' 텍스트 미명시 → 추론 거부")
+        parsed["property_type"] = None
+
     # 새로 파싱된 필드 (None 제거)
     new_fields = {
         k: v for k, v in {
@@ -271,16 +280,24 @@ def validate_node(state: AgentState) -> AgentState:
     if retry_count >= 2:
         return {**state, "is_valid": True, "error_message": None}
 
-    has_region    = bool(condition.get("region"))
-    has_deal_type = bool(condition.get("deal_type"))
-    has_price     = bool(
+    has_region        = bool(condition.get("region"))
+    has_deal_type     = bool(condition.get("deal_type"))
+    has_property_type = bool(condition.get("property_type"))
+    has_price         = bool(
         condition.get("max_deposit") or condition.get("max_monthly") or condition.get("max_price")
     )
 
-    if has_region and has_deal_type and has_price:
+    if has_region and has_deal_type and has_property_type and has_price:
         return {**state, "is_valid": True, "error_message": None}
 
-    missing = [k for k, v in {"지역": has_region, "거래유형": has_deal_type, "가격": has_price}.items() if not v]
+    missing = [
+        k for k, v in {
+            "지역":     has_region,
+            "거래유형": has_deal_type,
+            "방종류":   has_property_type,
+            "가격":     has_price,
+        }.items() if not v
+    ]
     return {**state, "is_valid": False, "error_message": f"필수 조건 누락: {', '.join(missing)}"}
 
 
@@ -293,13 +310,15 @@ def clarify_node(state: AgentState) -> AgentState:
     """
     condition = state.get("condition", {})
     examples  = {
-        "희망 지역":               "예: 서울 마포구, 강남구 역삼동",
-        "거래 유형(월세/전세/매매)": "예: 월세, 전세, 매매",
-        "예산":                   "예: 보증금 3000/월 80, 전세 3억 이하",
+        "희망 지역":                       "예: 서울 마포구, 강남구 역삼동",
+        "거래 유형(월세/전세/매매)":         "예: 월세, 전세, 매매",
+        "방 종류(아파트/원룸/투룸/오피스텔/빌라)": "예: 아파트, 원룸, 오피스텔",
+        "예산":                           "예: 보증금 3000/월 80, 전세 3억 이하, 매매 15억",
     }
     missing = []
-    if not condition.get("region"):    missing.append("희망 지역")
-    if not condition.get("deal_type"): missing.append("거래 유형(월세/전세/매매)")
+    if not condition.get("region"):        missing.append("희망 지역")
+    if not condition.get("deal_type"):     missing.append("거래 유형(월세/전세/매매)")
+    if not condition.get("property_type"): missing.append("방 종류(아파트/원룸/투룸/오피스텔/빌라)")
     if not any(condition.get(k) for k in ("max_deposit", "max_monthly", "max_price")):
         missing.append("예산")
 
