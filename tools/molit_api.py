@@ -382,6 +382,8 @@ def _parse_trade_item(item: ET.Element, btype: str) -> Optional[dict]:
     dong  = _g(item, "umdNm")
     year  = _g(item, "dealYear")
     month = _g(item, "dealMonth")
+    day   = _g(item, "dealDay")
+    deal_date = _format_deal_date(year, month, day)
 
     return {
         "id":                 "",
@@ -403,10 +405,11 @@ def _parse_trade_item(item: ET.Element, btype: str) -> Optional[dict]:
         "bathrooms":          0,
         "direction":          "",
         "built_year":         _to_int(_g(item, "buildYear")),
+        "deal_date":          deal_date,
         "features":           [],
         "neighborhood_features": [],
         "lifestyle_score":    0,
-        "description":        f"{year}년 {month}월 실거래 ({btype} 매매)",
+        "description":        f"{deal_date} 실거래 ({btype} 매매)",
         "score":              0,
     }
 
