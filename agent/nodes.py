@@ -48,6 +48,10 @@ class UserConditionModel(BaseModel):
     min_rooms: Optional[int] = Field(description="최소 방 개수", default=None)
     min_bathrooms: Optional[int] = Field(description="최소 욕실 개수", default=None)
     preferred_floor: Optional[str] = Field(description="'저층' | '중층' | '고층'", default=None)
+    top_floor_only: Optional[bool] = Field(
+        description="사용자가 '탑층' 또는 '꼭대기 층'을 명시했으면 True",
+        default=None,
+    )
     direction: Optional[str] = Field(description="'남향' | '동향' | '서향' | '북향'", default=None)
     max_building_age: Optional[int] = Field(description="최대 건물 연식", default=None)
     lifestyle: Optional[LifestyleModel] = None
@@ -196,10 +200,15 @@ def parse_condition_node(state: AgentState) -> AgentState:
             "min_rooms":          parsed.get("min_rooms"),
             "min_bathrooms":      parsed.get("min_bathrooms"),
             "preferred_floor":    parsed.get("preferred_floor"),
+            "top_floor_only":     parsed.get("top_floor_only"),
             "direction":          parsed.get("direction"),
             "max_building_age":   parsed.get("max_building_age"),
         }.items() if v is not None
     }
+
+    # 탑층/꼭대기 층 키워드는 LLM이 종종 놓침 → 정규식으로 보강
+    if re.search(r"탑\s*층|꼭대기|맨\s*위층|최상층", user_input):
+        new_fields["top_floor_only"] = True
 
     # 멀티턴: 이전 condition과 병합 (이전 정보 유지 + 새 정보로 덮어쓰기)
     prior_condition = dict(state.get("condition") or {})
@@ -479,19 +488,49 @@ def recommend_node(state: AgentState) -> AgentState:
     condition = state.get("condition", {})
     lifestyle = state.get("lifestyle", {})
 
-    # 매물 없음 → 조건 완화 힌트 반환
+    # 매물 없음 → 어떤 조건이 막았는지 솔직하게 안내
     if not filtered:
-        hints = []
+        # 데이터 한계로 매칭 불가능한 강성 조건
+        unsatisfiable: list[str] = []
+        if condition.get("top_floor_only"):
+            unsatisfiable.append(
+                "탑층(꼭대기 층) — 실거래가 데이터에 총층수 정보가 포함되지 않아 "
+                "탑층 여부를 확정할 수 없습니다."
+            )
+
+        # 완화 가능한 일반 조건
+        hints: list[str] = []
         if any(condition.get(k) for k in ("max_deposit", "max_monthly", "max_price")):
             hints.append("• 금액 상한을 조금 높여보세요")
         if condition.get("property_type"):
             hints.append(f"• '{condition['property_type']}' 외 다른 유형도 고려해보세요")
-        hints.append("• 인근 다른 구도 함께 찾아보세요")
+        if condition.get("min_area"):
+            hints.append(f"• 최소 면적({condition['min_area']}m²) 기준을 낮춰보세요")
+        if condition.get("min_households"):
+            hints.append(f"• 최소 세대수({condition['min_households']}세대) 기준을 낮춰보세요")
+        if condition.get("max_subway_minutes"):
+            hints.append(f"• 역까지 도보 시간({condition['max_subway_minutes']}분) 기준을 늘려보세요")
+        if condition.get("region"):
+            hints.append(f"• '{condition['region']}' 외 인근 지역도 함께 찾아보세요")
 
-        return {
-            **state,
-            "recommendations": "🔎 조건에 맞는 실거래 데이터가 없어요.\n" + "\n".join(hints),
-        }
+        msg_lines = ["❌ 조건에 정확히 맞는 매물을 찾지 못했어요."]
+        if unsatisfiable:
+            msg_lines.append("")
+            msg_lines.append("⚠️ 다음 조건은 현재 데이터로 매칭이 불가합니다:")
+            for u in unsatisfiable:
+                msg_lines.append(f"  • {u}")
+            if condition.get("top_floor_only"):
+                msg_lines.append("")
+                msg_lines.append(
+                    "💡 대안: '고층' 조건(상위 1/3 층)으로 다시 검색해 드릴까요? "
+                    "예) '탑층 빼고 고층으로 다시'"
+                )
+        if hints:
+            msg_lines.append("")
+            msg_lines.append("🔧 다른 조건도 함께 검토해보세요:")
+            msg_lines.extend(hints)
+
+        return {**state, "recommendations": "\n".join(msg_lines)}
 
     # 동네 정보 웹 검색 (Tavily 설정 시)
     region     = condition.get("region", "")

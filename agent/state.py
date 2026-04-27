@@ -17,6 +17,7 @@ class UserCondition(TypedDict, total=False):
     min_rooms:          Optional[int]    # 최소 방 개수
     min_bathrooms:      Optional[int]    # 최소 욕실 개수
     preferred_floor:    Optional[str]    # "저층" | "중층" | "고층"
+    top_floor_only:     Optional[bool]   # 탑층(꼭대기 층) 강제 — floor == total_floors
     direction:          Optional[str]    # "남향" | "동향" | "서향" | "북향" 등
     max_building_age:   Optional[int]    # 최대 건물 연식 (년)
 

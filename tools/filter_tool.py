@@ -86,6 +86,13 @@ def filter_and_score_raw(
             band = _floor_band(prop.get("floor", 0), prop.get("total_floors", 0))
             if band and band != condition["preferred_floor"]: continue
 
+        # 탑층 강제 — total_floors가 없으면(=실거래 데이터 한계) 정확 매칭 불가 → 모두 탈락
+        if condition.get("top_floor_only"):
+            total = prop.get("total_floors", 0)
+            floor = prop.get("floor", 0)
+            if not total or floor != total:
+                continue
+
         if condition.get("max_building_age") and prop.get("built_year"):
             if (current_year - prop["built_year"]) > condition["max_building_age"]: continue
 
