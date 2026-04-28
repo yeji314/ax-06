@@ -23,6 +23,7 @@ class UserCondition(TypedDict, total=False):
     exclude_high_foreign_density: Optional[bool]  # 외국인 밀집 동 제외 ("중국인 많지 않은" 등)
     commute_from:        Optional[str]            # 출퇴근 거점 역/구 (예: "시청역", "강남역")
     max_commute_minutes: Optional[int]            # 통근 최대 분 (예: 60 = 1시간 이내)
+    hangang_view_only:   Optional[bool]           # 한강에 인접한 동만 ("한강 근처/한강변/한강뷰")
 
 
 class UserLifestyle(TypedDict, total=False):

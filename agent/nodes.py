@@ -355,6 +355,11 @@ def parse_condition_node(state: AgentState) -> AgentState:
         condition["exclude_high_foreign_density"] = True
         print("[parse 보강] '중국인/외국인 많지 않은' 감지 → exclude_high_foreign_density=True")
 
+    # 한강 근접 패턴: '한강 근처/변/뷰/인접/주변' → 한강변 동만 필터링
+    if re.search(r"한강\s*(근처|변|뷰|view|인접|옆|주변|조망)", user_input, re.IGNORECASE):
+        condition["hangang_view_only"] = True
+        print("[parse 보강] '한강 근처/뷰' 감지 → hangang_view_only=True (강변 동만 검색)")
+
     # 통근 거점 패턴: '회사가 시청역', '회사 강남', '출근 시청'
     if not condition.get("commute_from"):
         m = re.search(

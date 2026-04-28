@@ -71,6 +71,13 @@ def filter_and_score_raw(
             if any(dong in district for dong in HIGH_FOREIGN_DENSITY_DONGS):
                 _reject("외국인 밀집 동 제외 요청"); continue
 
+        # 한강 인접 ('한강 근처/한강변/한강뷰')
+        if condition.get("hangang_view_only"):
+            from tools.molit_api import HANGANG_RIVERSIDE_DONGS
+            district = prop.get("district", "") or ""
+            if not any(dong in district for dong in HANGANG_RIVERSIDE_DONGS):
+                _reject("한강변 동 아님"); continue
+
         # 통근 시간 ('회사가 시청역, 1시간 이내')
         if condition.get("max_commute_minutes") and condition.get("commute_from"):
             from tools.molit_api import estimate_commute_minutes
