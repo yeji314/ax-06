@@ -205,7 +205,7 @@ def _read_input(prompt: str = "🏡 ") -> str:
 
 
 EXIT_TOKENS  = {"q", "quit", "exit", "종료"}
-RESET_TOKENS = {"새로", "처음부터", "리셋", "reset", "new", "초기화"}
+RESET_TOKENS = {"n", "N", "처음부터", "리셋", "reset", "new", "초기화"}
 
 
 def _new_thread_config() -> tuple[str, dict]:
@@ -248,7 +248,7 @@ def main() -> None:
     """
     멀티턴 대화형 진입점.
     - 첫 입력 후 매물 추천이 나오면, 자유 입력으로 후속 질의를 이어간다.
-    - 'q' 종료 / '새로' 입력 시 세션 초기화 (thread_id 재발급).
+    - 'q' 종료 / 'n' 입력 시 세션 초기화 (thread_id 재발급).
     """
     _print_header()
     _check_env()
@@ -271,7 +271,7 @@ def main() -> None:
 
         console.print(
             "\n[dim]💡 조건을 바꾸거나 추가 질문을 자유롭게 입력해 주세요. "
-            "(`새로`: 세션 초기화 / `q`: 종료)[/dim]"
+            "(`n`: 세션 초기화 / `q`: 종료)[/dim]"
         )
         next_input = _read_input("👉")
         low = next_input.lower()
