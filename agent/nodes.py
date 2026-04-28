@@ -1,5 +1,6 @@
 import json
 import re
+import unicodedata
 import warnings
 from typing import Optional, List # 추가
 from pydantic import BaseModel, Field # 추가
@@ -702,6 +703,55 @@ def verify_node(state: AgentState) -> AgentState:
     return new_state
 
 
+# ── 표시 유틸 ─────────────────────────────────────────────────────────────────
+
+def _vis_width(s: str) -> int:
+    """한글·이모지 등 와이드 문자를 2칸으로 계산하는 시각 폭."""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+
+
+def _vis_pad(s: str, target_width: int) -> str:
+    """시각 폭 기준으로 우측에 공백 padding."""
+    pad = max(0, target_width - _vis_width(s))
+    return s + " " * pad
+
+
+# 진단 메시지에서 길고 산만한 탈락 사유를 짧고 일관된 라벨로 축약
+_REASON_SHORT = {
+    "가격(매매가) 초과":              "매매가 초과",
+    "가격(보증금) 초과":              "보증금 초과",
+    "가격(월세) 초과":                "월세 초과",
+    "가격(전세가) 초과":              "전세가 초과",
+    "탑층 확정 불가(총층수 데이터 없음)": "탑층 확인 불가",
+    "역세권 정보 없음(데이터 한계)":   "역세권 정보 없음",
+    "외국인 밀집 동 제외 요청":        "외국인 밀집 동",
+    "거래유형 불일치":                "거래유형 불일치",
+    "방종류 불일치":                 "방종류 불일치",
+    "최소 면적 미달":                "면적 미달",
+    "최소 세대수 미달":              "세대수 미달",
+    "최소 방 수 미달":               "방 수 미달",
+    "최소 욕실 수 미달":             "욕실 수 미달",
+    "선호 방향 불일치":              "방향 불일치",
+    "선호 층대 불일치":              "층대 불일치",
+    "건물 구조 불일치":              "구조 불일치",
+    "주차 불가":                    "주차 불가",
+    "탑층 아님":                    "탑층 아님",
+    "연식 초과":                    "연식 초과",
+    "역까지 도보 시간 초과":          "역까지 도보 초과",
+    "verify-가격":                  "[verify] 가격 재초과",
+    "verify-거래유형":              "[verify] 거래유형 재불일치",
+    "verify-지역":                  "[verify] 지역 재불일치",
+}
+
+
+def _short_reason(reason: str) -> str:
+    if reason in _REASON_SHORT:
+        return _REASON_SHORT[reason]
+    if reason.startswith("통근 ") and "한도" in reason:
+        return "통근 시간 초과"
+    return reason
+
+
 # ── recommend_node ────────────────────────────────────────────────────────────
 
 @traceable(name="recommend")
@@ -743,14 +793,25 @@ def recommend_node(state: AgentState) -> AgentState:
             pct = (top_count * 100) // total_rejected if total_rejected else 0
 
             msg_lines.append("")
-            msg_lines.append(f"🔍 **0건이 된 핵심 이유**: {top_reason} ({top_count}건, 약 {pct}%)")
+            msg_lines.append(
+                f"🔍 핵심 이유: {_short_reason(top_reason)} "
+                f"({top_count:,}건 / {pct}%)"
+            )
 
-            # 상위 3개 사유 막대그래프 형식
+            # 상위 5개 사유 막대그래프
             msg_lines.append("")
-            msg_lines.append("📊 단계별 탈락 분포 (전체 {} 건 중):".format(total_rejected))
+            msg_lines.append(f"📊 단계별 탈락 분포 (전체 {total_rejected:,}건)")
+            msg_lines.append("─" * 56)
+
+            label_w = 18  # 사유 시각 폭 (한글 9자 정도)
+            bar_w   = 18  # 막대 최대 길이
             for reason, n in top[:5]:
-                bar = "█" * max(1, (n * 30) // top_count)
-                msg_lines.append(f"  {reason:24} {bar} {n}건")
+                pct_n = (n * 100) // total_rejected if total_rejected else 0
+                bar_len = max(1, (n * bar_w) // top_count) if top_count else 0
+                bar = "█" * bar_len + "░" * (bar_w - bar_len)
+                label = _vis_pad(_short_reason(reason), label_w)
+                msg_lines.append(f"  {label} {bar} {pct_n:>3}%  {n:>5,}건")
+            msg_lines.append("─" * 56)
 
         # 데이터 자체 한계 (사용자 잘못 아님)
         gap_msgs = []
