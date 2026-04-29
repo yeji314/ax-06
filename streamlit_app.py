@@ -475,7 +475,9 @@ else:
         else:
             with st.spinner("다시 분석 중입니다..."):
                 try:
-                    result = call_api(st.session_state.original_input, clarify_answer=clarify_answer)
+                    # clarify 답변은 새 user_input — MemorySaver가 같은 thread_id로
+                    # 이전 condition/lifestyle을 자동 병합한다.
+                    result = call_api(clarify_answer)
                     st.session_state.result = result
                     st.session_state.pending_clarify = False
                 except Exception as e:
