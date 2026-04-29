@@ -3,7 +3,7 @@ warnings.filterwarnings("ignore", message=".*OpenSSL.*")
 warnings.filterwarnings("ignore", message=".*LibreSSL.*")
 warnings.filterwarnings("ignore", message=".*PydanticSerializationUnexpectedValue.*")
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,7 +44,7 @@ class RecommendResponse(BaseModel):
     condition: dict[str, Any]       
     lifestyle: dict[str, Any]       
     is_valid: bool
-    error_message: str | None
+    error_message: Optional[str]
     search_count: int               
     filtered_count: int             
     filtered_results: list[dict[str, Any]]
@@ -54,7 +54,7 @@ class RecommendResponse(BaseModel):
 def health():
     return {"status": "ok"}
 
-@app.post("/recommend", response_model=ClarifyResponse | RecommendResponse)
+@app.post("/recommend", response_model=Union[ClarifyResponse, RecommendResponse])
 def recommend(req: RecommendRequest):
     if not req.user_input.strip():
         raise HTTPException(status_code=400, detail="user_input이 비어 있습니다.")
