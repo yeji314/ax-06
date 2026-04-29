@@ -191,6 +191,50 @@ def filter_and_score_raw(
 
         score += len(prop.get("features", [])) * 3
 
+        # ── 차등화 점수 (MOLIT 실데이터 활용) ─────────────────────────────────
+        # 가성비 — 사용자 한도 대비 거래가가 낮을수록 가산
+        max_p = (
+            condition.get("max_price")
+            or condition.get("max_deposit")
+            or condition.get("max_monthly")
+            or 0
+        )
+        if max_p and deposit and deal_type in ("매매", "전세"):
+            ratio = deposit / max_p
+            if   ratio < 0.6: score += 10  # 한도의 60% 미만 → 가성비 우수
+            elif ratio < 0.8: score += 5   # 한도의 80% 미만 → 적정
+
+        # 연식 보너스 (신축 우선)
+        built = prop.get("built_year") or 0
+        if built:
+            age = current_year - built
+            if   age <= 5:  score += 10  # 신축
+            elif age <= 10: score += 5   # 준신축
+            elif age >= 30: score -= 5   # 노후 감점
+
+        # 면적 가성비 — 같은 가격 대비 큰 평수 우대
+        area = prop.get("area_m2", 0) or 0
+        if area >= 100:     score += 5   # 30평+
+        elif area >= 84:    score += 3   # 25평+
+        # 너무 작은 매물 (오피스텔 룸) 약간 감점
+        if area > 0 and area < 30:       score -= 5
+
+        # 거래 최신성 — 최근 1개월 거래는 시세 신뢰도 ↑
+        deal_date = prop.get("deal_date", "") or ""
+        if deal_date:
+            now = datetime.now()
+            this_ym = f"{now.year}-{now.month:02d}"
+            if deal_date.startswith(this_ym):
+                score += 3
+
+        # 한강·학군 키워드 매칭 (lifestyle 입력했고 매물이 해당 동이면)
+        ls_amens = lifestyle.get("amenities") or []
+        district = prop.get("district", "") or ""
+        if "한강" in ls_amens:
+            from tools.molit_api import HANGANG_RIVERSIDE_DONGS
+            if any(d in district for d in HANGANG_RIVERSIDE_DONGS):
+                score += 10  # 한강변 매물 큰 가산
+
         # 생활권 보너스
         if has_ls:
             ls_score = prop.get("lifestyle_score", 0)
@@ -198,7 +242,7 @@ def filter_and_score_raw(
                 bonus = int(ls_score * 0.3)
                 score += bonus
 
-        prop["score"] = score
+        prop["score"] = max(0, score)  # 음수 방지
         passed.append(prop)
 
     passed.sort(key=lambda x: x["score"], reverse=True)
