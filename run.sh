@@ -50,7 +50,11 @@ fi
 
 # ── Streamlit 실행 ────────────────────────────────────────────────────────────
 echo -e "${CYAN}[Streamlit] 서버 시작 중... (http://localhost:8501)${NC}"
-"$PY" -m streamlit run streamlit_app.py --server.port 8501 --server.address 0.0.0.0 &
+"$PY" -m streamlit run streamlit_app.py \
+    --server.port 8501 \
+    --server.address 0.0.0.0 \
+    --server.headless true \
+    --browser.gatherUsageStats false &
 STREAMLIT_PID=$!
 
 # ── 실행 정보 출력 ────────────────────────────────────────────────────────────

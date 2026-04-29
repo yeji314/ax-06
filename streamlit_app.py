@@ -419,6 +419,7 @@ if not st.session_state.pending_clarify:
                 label="input",
                 placeholder="예) 마포구 월세 3000/80 이하 투룸 찾아줘",
                 label_visibility="collapsed",
+                key="search_input",
             )
         with col_btn:
             submitted = st.form_submit_button("검색", use_container_width=True)
@@ -455,6 +456,7 @@ else:
         col_input, col_btn = st.columns([4, 1])
         with col_input:
             clarify_answer = st.text_input(
+                key="clarify_input",
                 label="clarify",
                 placeholder="답변을 입력해 주세요",
                 label_visibility="collapsed",
