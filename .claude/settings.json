@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(git -C /Users/a60157119/final_ax6 status)",
+      "Bash(git -C /Users/a60157119/final_ax6 diff --stat)",
+      "Bash(git -C /Users/a60157119/final_ax6 log --oneline -5)",
+      "Bash(git -C /Users/a60157119/final_ax6 branch -vv)",
+      "Bash(git -C /Users/a60157119/final_ax6 add agent/nodes.py agent/state.py data/mock_properties.json main.py tools/filter_tool.py)",
+      "Bash(git -C /Users/a60157119/final_ax6 commit -m ' *)",
+      "Bash(git -C /Users/a60157119/final_ax6 push origin main)",
+      "Bash(git -C /Users/a60157119/final_ax6 log --oneline -3)",
+      "Bash(git -C /Users/a60157119/final_ax6 add agent/nodes.py tools/search_tool.py tools/llm_search_tool.py)"
+    ]
+  }
+}
