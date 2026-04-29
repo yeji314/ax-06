@@ -17,9 +17,25 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
+# ── Python 실행기 결정 ────────────────────────────────────────────────────────
+# python3 → python 순으로 사용 (PATH에 uvicorn/streamlit 명령어가 없어도 동작)
+if command -v python3 >/dev/null 2>&1; then
+    PY=python3
+else
+    PY=python
+fi
+
+# 패키지 사전 점검
+if ! "$PY" -c "import uvicorn, streamlit" >/dev/null 2>&1; then
+    echo -e "${RED}[오류] uvicorn 또는 streamlit이 설치돼 있지 않습니다.${NC}"
+    echo -e "${YELLOW}다음 명령으로 의존성을 먼저 설치하세요:${NC}"
+    echo -e "  ${CYAN}$PY -m pip install -r requirements.txt${NC}"
+    exit 1
+fi
+
 # ── FastAPI 실행 ──────────────────────────────────────────────────────────────
 echo -e "${CYAN}[FastAPI] 서버 시작 중... (http://localhost:8000)${NC}"
-uvicorn api:app --reload --host 0.0.0.0 --port 8000 &
+"$PY" -m uvicorn api:app --reload --host 0.0.0.0 --port 8000 &
 FASTAPI_PID=$!
 
 # FastAPI가 뜰 때까지 잠깐 대기
@@ -34,7 +50,7 @@ fi
 
 # ── Streamlit 실행 ────────────────────────────────────────────────────────────
 echo -e "${CYAN}[Streamlit] 서버 시작 중... (http://localhost:8501)${NC}"
-streamlit run streamlit.py --server.port 8501 --server.address 0.0.0.0 &
+"$PY" -m streamlit run streamlit.py --server.port 8501 --server.address 0.0.0.0 &
 STREAMLIT_PID=$!
 
 # ── 실행 정보 출력 ────────────────────────────────────────────────────────────
