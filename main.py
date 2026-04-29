@@ -7,7 +7,7 @@ LangGraph 기반 멀티턴 대화형 부동산 추천 Agent.
 
 추가 인터페이스:
   - FastAPI:  uvicorn api:app --reload
-  - Streamlit: streamlit run streamlit.py
+  - Streamlit: streamlit run streamlit_app.py
   - 동시 실행: ./run.sh
 """
 

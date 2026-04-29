@@ -120,7 +120,7 @@ python main.py
 ### 옵션 3 — 따로 실행
 ```bash
 uvicorn api:app --reload --port 8000
-streamlit run streamlit.py --server.port 8501
+streamlit run streamlit_app.py --server.port 8501
 ```
 
 ---
@@ -326,7 +326,7 @@ raw_keywords: 사용자 원문
 final_ax6/
 ├── main.py                  # CLI 진입점 (python main.py)
 ├── api.py                   # FastAPI 서버
-├── streamlit.py             # Streamlit UI
+├── streamlit_app.py         # Streamlit UI (streamlit 패키지명 충돌 회피용 이름)
 ├── run.sh                   # FastAPI + Streamlit 동시 실행
 ├── test_molit.py            # MOLIT API 단독 테스트
 ├── requirements.txt
