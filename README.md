@@ -69,10 +69,14 @@ LangGraph 기반 State Machine으로 자연어 검색 조건을 분석하고, **
 
 ## ⚙️ 설치 방법
 
+**요구 사항**: Python 3.9 이상 (3.9에서 검증)
+
 ```bash
 git clone <repo>
 cd final_ax6
 pip install -r requirements.txt
+# python 명령이 없으면 python3 사용
+python3 -m pip install -r requirements.txt
 ```
 
 ---
@@ -232,15 +236,15 @@ raw_keywords: 사용자 원문
 - `property_type`에 따라 호출 엔드포인트 자동 선택 (불필요한 호출 차단)
 - 최근 3개월 페이지네이션 수집 (페이지당 1000건 × 5페이지)
 - **다중 룩업 테이블 내장**:
-  - `LAWD_CD_MAP` — 서울 25구 + 경기 주요 시 법정동 코드 (31개)
-  - `LANDMARK_TO_GU` — 역명·동명·랜드마크 → 구 매핑 (60+ 항목)
+  - `LAWD_CD_MAP` — 서울 25구 + 경기 주요 시 법정동 코드 (35개)
+  - `LANDMARK_TO_GU` — 역명·동명·랜드마크 → 구 매핑 (70개)
   - `NEIGHBOR_GU` — 25개 구 인접 그래프 (verify 재시도용)
-  - `STATION_TO_NEAR_DONGS` — 50+ 역 → 도보권 법정동
-  - `SUBWAY_LINE_TO_GU` — 12개 노선 → 대표 구
-  - `LIFESTYLE_KEYWORD_TO_GU` — 16개 라이프스타일 키워드 → 구
-  - `HANGANG_RIVERSIDE_DONGS` — 한강 인접 35개 법정동
+  - `STATION_TO_NEAR_DONGS` — 64개 역 → 도보권 법정동
+  - `SUBWAY_LINE_TO_GU` — 16개 노선 → 대표 구
+  - `LIFESTYLE_KEYWORD_TO_GU` — 19개 라이프스타일 키워드 → 구
+  - `HANGANG_RIVERSIDE_DONGS` — 한강 인접 39개 법정동
   - `HIGH_FOREIGN_DENSITY_DONGS` — 외국인 밀집 7개 동
-  - `COMMUTE_TIME_FROM_HUB` — 5개 거점 × 25구 = 125개 통근 시간 추정치
+  - `COMMUTE_TIME_FROM_HUB` — 5개 거점(+별칭 5개) × 25구 = 약 125개 통근 시간 추정치
   - `OFFICETEL_NAME_HINTS` / `VILLA_NAME_HINTS` / `APT_BRAND_WHITELIST` — 매물 이름 재분류용
 
 ### `tools/filter_tool.py` — 필터링 + 점수화
